@@ -4,7 +4,9 @@
             [clojure-commons.props :as props]
             [clojure-commons.clavin-client :as cl]
             [clojure.tools.logging :as log]
-            [clojure.data.json :as json]))
+            [clojure.data.json :as json]
+            [clojure.java.shell :as sh]
+            [clojure.string :as string]))
 
 (def props (atom nil))
 
@@ -32,12 +34,25 @@
 (defn condor-config [] (get @props "panopticon.condor.condor-config"))
 (defn condor-q [] (get @props "panopticon.condor.condor-q"))
 (defn condor-history [] (get @props "panopticon.condor.condor-history"))
-(defn osm-client [] (osm/create osm-url osm-coll))
+(defn num-instances [] (Integer/parseInt (get @props "panopticon.app.num-instances")))
+
+(def boolize #(boolean (Boolean. %)))
+(defn any? [pred coll] ((comp not not-any?) pred coll))
+
+(defn osm-client [] (osm/create (osm-url) (osm-coll)))
+(defn job-status [classad-map] (get JOBSTATUS (get classad-map "JobStatus")))
 
 (defn running-jobs 
   [osm-client]
   (let [query {"$or" [{"state.status" RUNNING} {"state.status" SUBMITTED}]}]
     (:objects (json/read-json (osm/query osm-client query)))))
+
+(defn post-osm-updates
+  [osm-objects osm-client]
+  (doseq [osm-object osm-objects]
+    (let [new-state (:state osm-object)
+          osm-id    (:object_persistence_uuid osm-object)]
+      (osm/update-object osm-client osm-id new-state))))
 
 (defn history
   [uuid]
@@ -48,8 +63,84 @@
 (defn queue
   [uuid]
   (let [ipc-uuid (str "IpcUuid ==\"" uuid "\"")
-        cmd      ["condor_q" "-list" "-constraint" ipc-uuid]]
+        cmd      ["condor_q" "-long" "-constraint" ipc-uuid]]
     (apply sh/sh cmd)))
+
+(defn parallel-func
+  [func uuids]
+  (let [anon-funcs (into [] (map #(partial func %) uuids))]
+    (into [] (flatten 
+               (for [func-part (partition-all (num-instances) anon-funcs)]
+                 (apply pcalls func-part))))))
+
+(defn classad-maps
+  [job-output]
+  (into [] (for [classad-str (string/split job-output #"\n\n")]
+             (apply merge 
+                    (for [classad-line (string/split classad-str #"\n")]
+                      (let [sections (string/split classad-line #"\=")
+                            cl-key   (string/trim (first sections))
+                            cl-val   (-> (string/join "=" (rest sections))
+                                       (string/trim)
+                                       (string/replace #"^\"" "")
+                                       (string/replace #"\"$" ""))]
+                        {cl-key cl-val}))))))
+
+(defn job-failed?
+  [classad-map]
+  (let [exit-by-signal (boolize (get classad-map "ExitBySignal"))
+        exit-code      (get classad-map "ExitCode")
+        job-status     (job-status classad-map)]
+    (cond
+      (= job-status REMOVED)    true
+      (= job-status HELD)       true
+      (= job-status SUBERR)     true
+      (= job-status SUBMITTED)  false
+      (= job-status UNEXPANDED) false
+      (= job-status IDLE)       false
+      (= job-status RUNNING)    false
+      (and (= job-status COMPLETED) exit-by-signal)       true
+      (and (= job-status COMPLETED) (not= exit-code "0")) true
+      :else true)))
+
+(defn analysis-submitted? [clds] (every? #(= (job-status %) SUBMITTED) clds))
+(defn analysis-completed? [clds] (every? #(= (job-status %) COMPLETED) clds))
+(defn analysis-running? [clds] (any? #(= (job-status %) RUNNING) clds))
+(defn analysis-failed? [clds] (any? job-failed? clds))
+(defn analysis-held? [clds] (any? #(= (job-status %) HELD) clds))
+
+(defn analysis-status
+  [clds]
+  (cond
+    (analysis-failed? clds)    FAILED
+    (analysis-completed? clds) COMPLETED
+    (analysis-submitted? clds) SUBMITTED
+    (analysis-running? clds)   RUNNING
+    (analysis-held? clds)      HELD
+    :else                      IDLE))
+
+(defn classads-for-osm-object
+  [osm-object all-classads]
+  (let [osm-uuid (:uuid (:state osm-object))]
+    (into [] (filter #(= (get % "IpcUuid") osm-uuid) all-classads))))
+
+(defn osm-job-for-classad
+  [classad osm-object]
+  (let [cl-job-id (keyword (get classad "IpcJobId"))
+        osm-jobs (:jobs (:state osm-object))]
+    [cl-job-id (get osm-jobs cl-job-id)]))
+
+(defn update-jobs
+  [osm-obj classads]
+  (apply merge (for [classad classads]
+                 (let [[job-id job] (osm-job-for-classad classad osm-obj)]
+                   (assoc-in osm-obj [:state :jobs job-id :status] (job-status classad))))))
+
+(defn update-osm-objects
+  [osm-objects all-classads]
+  (into [] (for [osm-obj osm-objects]
+             (let [classads (classads-for-osm-object osm-obj all-classads)]
+               (assoc-in (update-jobs osm-obj classads) [:state :status] (analysis-status classads))))))
 
 (defn -main
   [& args]
@@ -66,8 +157,13 @@
     (reset! props (cl/properties "panopticon")))
   
   (loop []
-    ;;Grab running or submitted jobs from the OSM.
-    ;;Look up jobs in in condor_q and condor_history.
-    ;;Update the job maps.
-    ;;Push the updated job maps into the OSM.
+    (let [osm-cl      (osm-client)
+          osm-objects (running-jobs osm-cl)
+          osm-uuids   (map #(:uuid (:state %)) osm-objects)
+          classads    (concat 
+                        (parallel-func queue osm-uuids)
+                        (parallel-func history osm-uuids))]
+      (-> osm-objects
+        (update-osm-objects classads)
+        (post-osm-updates osm-cl)))
     (recur)))

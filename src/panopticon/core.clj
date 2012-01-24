@@ -48,36 +48,48 @@
     (:objects (json/read-json (osm/query osm-client query)))))
 
 (defn post-osm-updates
-  [osm-objects osm-client]
+  [osm-objects osm-cl]
   (doseq [osm-object osm-objects]
     (let [new-state (:state osm-object)
           osm-id    (:object_persistence_uuid osm-object)]
-      (osm/update-object osm-client osm-id new-state))))
+      (log/debug "Posting object to the OSM: ")
+      (log/debug new-state)
+      (osm/update-object osm-cl osm-id new-state))))
 
 (defn history
   [uuid]
   (let [ipc-uuid (str "IpcUuid ==\"" uuid "\"")
-        cmd      ["condor_history" "-l" "-constraint" ipc-uuid]]
-    (apply sh/sh cmd)))
+        cmd      ["condor_history" "-l" "-constraint" ipc-uuid]
+        results  (apply sh/sh cmd)]
+    (log/info cmd)
+    (log/info (str "Exit Code: " (:exit results)))
+    (log/warn (str "stderr: " (:err results)))
+    (log/debug (str "stdout: " (:out results)))
+    (:out results)))
 
 (defn queue
   [uuid]
   (let [ipc-uuid (str "IpcUuid ==\"" uuid "\"")
-        cmd      ["condor_q" "-long" "-constraint" ipc-uuid]]
-    (apply sh/sh cmd)))
+        cmd      ["condor_q" "-long" "-constraint" ipc-uuid]
+        results  (apply sh/sh cmd)]
+    (log/info cmd)
+    (log/info (str "Exit Code: " (:exit results)))
+    (log/warn (str "stderr: " (:err results)))
+    (log/debug (str "stdout: " (:out results)))
+    (string/trim (:out results))))
 
-(defn parallel-func
-  [func uuids]
-  (let [anon-funcs (into [] (map #(partial func %) uuids))]
-    (into [] (flatten 
-               (for [func-part (partition-all (num-instances) anon-funcs)]
-                 (apply pcalls func-part))))))
+(defn classad-lines
+  [classad-str]
+  (into [] 
+        (filter 
+          #(not (re-find #"^--" %)) 
+          (-> classad-str (string/split #"\n")))))
 
 (defn classad-maps
   [job-output]
   (into [] (for [classad-str (string/split job-output #"\n\n")]
              (apply merge 
-                    (for [classad-line (string/split classad-str #"\n")]
+                    (for [classad-line (classad-lines classad-str)]
                       (let [sections (string/split classad-line #"\=")
                             cl-key   (string/trim (first sections))
                             cl-val   (-> (string/join "=" (rest sections))
@@ -85,6 +97,13 @@
                                        (string/replace #"^\"" "")
                                        (string/replace #"\"$" ""))]
                         {cl-key cl-val}))))))
+
+(defn parallel-func
+  [func uuids]
+  (let [anon-funcs (into [] (map #(partial (comp classad-maps func) %) uuids))]
+    (into [] (flatten 
+               (for [func-part (partition-all (num-instances) anon-funcs)]
+                 (apply pcalls func-part))))))
 
 (defn job-failed?
   [classad-map]
@@ -163,7 +182,9 @@
           classads    (concat 
                         (parallel-func queue osm-uuids)
                         (parallel-func history osm-uuids))]
+      (log/debug classads)
       (-> osm-objects
         (update-osm-objects classads)
+        (log/debug)
         (post-osm-updates osm-cl)))
     (recur)))

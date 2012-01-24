@@ -5,6 +5,7 @@ classes
 *~
 bin
 .classpath
+.settings
 .project
 .lein*
 \#*\#

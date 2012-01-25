@@ -128,20 +128,13 @@
       (log/warn (str "stderr: " (:err results)))
       (log/warn (str "stdout: " (:out results))))))
 
-(defn rm-file
-  [fobj]
-  (try
-    (.delete fobj)
-    (catch java.lang.Exception e
-      (log/warn e))))
-
 (defn rm-dir
   [dir-path]
-  (let [dir-obj (clojure.java.io/file dir-path)]
-    (doseq [dobj (.listFiles dir-obj)]
-      (cond
-        (.isFile dobj)      (rm-file dobj)
-        (.isDirectory dobj) (rm-dir (.getPath dobj))))))
+  (let [dobj (clojure.java.io/file dir-path)]
+    (try
+      (org.apache.commons.io.FileUtils/deleteDirectory dobj)
+      (catch java.lang.Exception e
+        (log/warn e)))))
 
 (defn parallel-func
   [func uuids]

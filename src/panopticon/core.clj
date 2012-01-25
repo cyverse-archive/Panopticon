@@ -3,9 +3,11 @@
   (:require [clojure-commons.osm :as osm]
             [clojure-commons.props :as props]
             [clojure-commons.clavin-client :as cl]
+            [clojure-commons.file-utils :as ft]
             [clojure.tools.logging :as log]
             [clojure.data.json :as json]
             [clojure.java.shell :as sh]
+            [clojure.java.io :as io]
             [clojure.string :as string]))
 
 (def props (atom nil))
@@ -107,6 +109,40 @@
     (log/info (str "stdout: " (:out results)))
     (classad-maps (string/trim (:out results)))))
 
+(defn condor-rm
+  [dag-id]
+  (let [cmd ["condor_rm" dag-id]
+        results (apply sh/sh cmd)]
+    (log/warn cmd)
+    (log/warn (str "Exit Code: " (:exit results)))
+    (log/warn (str "stderr: " (:err results)))
+    (log/warn (str "stdout: " (:out results)))))
+
+(defn transfer
+  [source-dir output-dir]
+  (when (ft/exists? source-dir)
+    (let [cmd     ["/usr/local/bin/handle_error.sh" source-dir output-dir "1"]
+          results (apply sh/sh cmd)]
+      (log/warn cmd)
+      (log/warn (str "Exit Code: " (:exit results)))
+      (log/warn (str "stderr: " (:err results)))
+      (log/warn (str "stdout: " (:out results))))))
+
+(defn rm-file
+  [fobj]
+  (try
+    (.delete fobj)
+    (catch java.lang.Exception e
+      (log/warn e))))
+
+(defn rm-dir
+  [dir-path]
+  (let [dir-obj (clojure.java.io/file dir-path)]
+    (doseq [dobj (.listFiles dir-obj)]
+      (cond
+        (.isFile dobj)      (rm-file dobj)
+        (.isDirectory dobj) (rm-dir (.getPath dobj))))))
+
 (defn parallel-func
   [func uuids]
   (let [anon-funcs (into [] (map #(partial (comp classad-maps func) %) uuids))]
@@ -204,6 +240,33 @@
                          a-status     (analysis-status updated-jobs)]
                      (assoc-in updated-jobs [:state :status] a-status))))))))
 
+(defn cleanup
+  [osm-objects]
+  (doseq [osm-object osm-objects]
+    (let [jstatus (get-in osm-object [:state :status])
+          dag-id  (get-in osm-object [:state :dag_id])
+          ldir    (get-in osm-object [:state :condor-log-dir])
+          wdir    (get-in osm-object [:state :working_dir])
+          odir    (get-in osm-object [:state :output_dir])]
+      (cond
+        (= jstatus HELD)
+        (do (condor-rm dag-id)
+          (transfer wdir odir)
+          (transfer ldir odir)
+          (rm-dir ldir)
+          (rm-dir wdir))
+        
+        (= jstatus FAILED)
+        (do (transfer ldir odir)
+          (rm-dir ldir)
+          (rm-dir wdir))
+        
+        (= jstatus COMPLETED)
+        (do  (transfer ldir odir)
+          (rm-dir ldir)
+          (rm-dir wdir)))))
+  osm-objects)
+
 (defn filter-classads
   [classads]
   (into [] (filter #(contains? % "IpcUuid") classads)))
@@ -235,5 +298,6 @@
                                              (history osm-uuids)))]
           (-> osm-objects
             (update-osm-objects classads)
+            (cleanup)
             (post-osm-updates)))))
     (recur)))

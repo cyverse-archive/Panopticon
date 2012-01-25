@@ -19,8 +19,8 @@ Source0: %{name}-%{version}.tar.gz
 iPlant Panopticon
 
 %pre
-getent group iplant > /dev/null || groupadd -r iplant
-getent passwd iplant > /dev/null || useradd -r -g iplant -d /home/iplant -s /bin/bash -c "User for the iPlant services." iplant
+getent group condor > /dev/null || groupadd -r condor
+getent passwd condor > /dev/null || useradd -r -g condor -d /home/condor -s /bin/bash -c "User for the iPlant services." condor
 exit 0
 
 %prep
@@ -63,16 +63,16 @@ lein clean
 rm -r lib/*
 
 %files
-%attr(-,iplant,iplant) /usr/local/lib/panopticon/
-%attr(-,iplant,iplant) /var/run/panopticon/
-%attr(-,iplant,iplant) /var/lock/subsys/panopticon/
-%attr(-,iplant,iplant) /var/log/panopticon/
-%attr(-,iplant,iplant) /etc/panopticon/
+%attr(-,condor,condor) /usr/local/lib/panopticon/
+%attr(-,condor,condor) /var/run/panopticon/
+%attr(-,condor,condor) /var/lock/subsys/panopticon/
+%attr(-,condor,condor) /var/log/panopticon/
+%attr(-,condor,condor) /etc/panopticon/
 
-%config %attr(0644,iplant,iplant) /etc/panopticon/log4j.properties
-%config %attr(0644,iplant,iplant) /etc/panopticon/panopticon.properties
+%config %attr(0644,condor,condor) /etc/panopticon/log4j.properties
+%config %attr(0644,condor,condor) /etc/panopticon/panopticon.properties
 
 %attr(0755,root,root) /etc/init.d/panopticon
-%attr(0644,iplant,iplant) /usr/local/lib/panopticon/panopticon-1.0.0-SNAPSHOT-standalone.jar
+%attr(0644,condor,condor) /usr/local/lib/panopticon/panopticon-1.0.0-SNAPSHOT-standalone.jar
 
 

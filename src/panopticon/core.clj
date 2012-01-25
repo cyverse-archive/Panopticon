@@ -43,40 +43,21 @@
 (defn job-status [classad-map] (get JOBSTATUS (get classad-map "JobStatus")))
 
 (defn running-jobs 
-  [osm-client]
-  (let [query {"$or" [{"state.status" RUNNING} {"state.status" SUBMITTED}]}]
-    (:objects (json/read-json (osm/query osm-client query)))))
+  []
+  (let [query {"$or" [{"state.status" RUNNING} 
+                      {"state.status" SUBMITTED}
+                      {"state.status" IDLE}]}]
+    (:objects (json/read-json (osm/query (osm-client) query)))))
 
 (defn post-osm-updates
-  [osm-objects osm-cl]
+  [osm-objects]
   (doseq [osm-object osm-objects]
     (let [new-state (:state osm-object)
           osm-id    (:object_persistence_uuid osm-object)]
-      (log/debug "Posting object to the OSM: ")
-      (log/debug new-state)
-      (osm/update-object osm-cl osm-id new-state))))
-
-(defn history
-  [uuid]
-  (let [ipc-uuid (str "IpcUuid ==\"" uuid "\"")
-        cmd      ["condor_history" "-l" "-constraint" ipc-uuid]
-        results  (apply sh/sh cmd)]
-    (log/info cmd)
-    (log/info (str "Exit Code: " (:exit results)))
-    (log/warn (str "stderr: " (:err results)))
-    (log/debug (str "stdout: " (:out results)))
-    (:out results)))
-
-(defn queue
-  [uuid]
-  (let [ipc-uuid (str "IpcUuid ==\"" uuid "\"")
-        cmd      ["condor_q" "-long" "-constraint" ipc-uuid]
-        results  (apply sh/sh cmd)]
-    (log/info cmd)
-    (log/info (str "Exit Code: " (:exit results)))
-    (log/warn (str "stderr: " (:err results)))
-    (log/debug (str "stdout: " (:out results)))
-    (string/trim (:out results))))
+      (log/info (str "OSM Posting " osm-id ": "))
+      (if (nil? osm-id)
+        (log/info (str "OSM state" new-state)))
+      (osm/update-object (osm-client) osm-id new-state))))
 
 (defn classad-lines
   [classad-str]
@@ -97,6 +78,34 @@
                                        (string/replace #"^\"" "")
                                        (string/replace #"\"$" ""))]
                         {cl-key cl-val}))))))
+
+(defn constraint
+  [uuid]
+  ["-constraint" (str "IpcUuid ==\"" uuid "\"")])
+
+(defn history
+  [uuids]
+  (log/warn (count uuids))
+  (let [consts   (into [] (flatten (map constraint uuids)))
+        cmd      (concat ["condor_history" "-l"] consts)
+        results  (apply sh/sh cmd)]
+    (log/warn cmd)
+    (log/info (str "Exit Code: " (:exit results)))
+    (log/info (str "stderr: " (:err results)))
+    (log/info (str "stdout: " (:out results)))
+    (classad-maps (string/trim (:out results)))))
+
+(defn queue
+  [uuids]
+  (log/warn (count uuids))
+  (let [consts   (into [] (flatten (map constraint uuids)))
+        cmd      (concat ["condor_q" "-long"] consts)
+        results  (apply sh/sh cmd)]
+    (log/warn cmd)
+    (log/info (str "Exit Code: " (:exit results)))
+    (log/info (str "stderr: " (:err results)))
+    (log/info (str "stdout: " (:out results)))
+    (classad-maps (string/trim (:out results)))))
 
 (defn parallel-func
   [func uuids]
@@ -149,22 +158,39 @@
         osm-jobs (:jobs (:state osm-object))]
     [cl-job-id (get osm-jobs cl-job-id)]))
 
+(defn jobs-map
+  [osm-obj classads]
+  (apply merge (into [] (for [classad classads]
+                          (let [[job-id job] (osm-job-for-classad classad osm-obj)]
+                            (log/warn (str "JOB ID: " job-id "\tOSMID: " (:object_persistence_uuid osm-obj)))
+                            {job-id (assoc job :status (job-status classad))})))))
+
 (defn update-jobs
   [osm-obj classads]
-  (apply merge (for [classad classads]
-                 (let [[job-id job] (osm-job-for-classad classad osm-obj)]
-                   (assoc-in osm-obj [:state :jobs job-id :status] (job-status classad))))))
+  (let [osm-jobs (jobs-map osm-obj classads)]
+    (assoc-in osm-obj [:state :jobs] osm-jobs)))
 
 (defn update-osm-objects
   [osm-objects all-classads]
-  (into [] (for [osm-obj osm-objects]
-             (let [classads (classads-for-osm-object osm-obj all-classads)]
-               (assoc-in (update-jobs osm-obj classads) [:state :status] (analysis-status classads))))))
+  (log/info (str "OSM COUNT: " (count osm-objects)))
+  (log/warn (into [] (map #(get % "IpcJobId") all-classads)))
+  (into [] (filter 
+             #(not (nil? %)) 
+             (for [osm-obj osm-objects]
+               (let [classads (classads-for-osm-object osm-obj all-classads)]
+                 (if (> (count classads) 0) 
+                   (assoc-in (update-jobs osm-obj classads) [:state :status] (analysis-status classads))))))))
+
+(defn filter-classads
+  [classads]
+  (into [] (filter #(contains? % "IpcUuid") classads)))
 
 (defn -main
   [& args]
   (def zkprops (props/parse-properties "panopticon.properties"))
   (def zkurl (get zkprops "zookeeper"))
+  
+  (log/info "Starting up. Reading configuration from Zookeeper.")
   
   (cl/with-zk
     zkurl
@@ -175,16 +201,16 @@
     
     (reset! props (cl/properties "panopticon")))
   
+  (log/info "Done reading configuration from Zookeeper.")
+  (log/info (str "OSM Client: " (osm-client)))
   (loop []
-    (let [osm-cl      (osm-client)
-          osm-objects (running-jobs osm-cl)
-          osm-uuids   (map #(:uuid (:state %)) osm-objects)
-          classads    (concat 
-                        (parallel-func queue osm-uuids)
-                        (parallel-func history osm-uuids))]
-      (log/debug classads)
-      (-> osm-objects
-        (update-osm-objects classads)
-        (log/debug)
-        (post-osm-updates osm-cl)))
+    (let [osm-objects (running-jobs)]
+      (when (> (count osm-objects) 0)
+        (let [osm-uuids   (into [] (map #(:uuid (:state %)) osm-objects))
+              classads    (filter-classads (concat 
+                                             (queue osm-uuids)
+                                             (history osm-uuids)))]
+          (-> osm-objects
+            (update-osm-objects classads)
+            (post-osm-updates)))))
     (recur)))

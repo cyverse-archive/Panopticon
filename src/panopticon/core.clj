@@ -131,21 +131,37 @@
       (and (= job-status COMPLETED) (not= exit-code "0")) true
       :else true)))
 
-(defn analysis-submitted? [clds] (every? #(= (job-status %) SUBMITTED) clds))
-(defn analysis-completed? [clds] (every? #(= (job-status %) COMPLETED) clds))
-(defn analysis-running? [clds] (any? #(= (job-status %) RUNNING) clds))
-(defn analysis-failed? [clds] (any? job-failed? clds))
-(defn analysis-held? [clds] (any? #(= (job-status %) HELD) clds))
+(defn de-job-status
+  [classad]
+  (let [condor-status  (job-status classad)
+        exit-by-signal (boolize (get classad "ExitBySignal"))
+        exit-code      (get classad "ExitCode")]
+    (cond
+      (and (= condor-status COMPLETED) exit-by-signal)       FAILED
+      (and (= condor-status COMPLETED) (not= exit-code "0")) FAILED
+      (= condor-status HELD)    FAILED
+      (= condor-status SUBERR)  FAILED
+      (= condor-status REMOVED) FAILED
+      :else                     condor-status)))
+
+(defn- status-matches? [[job-key job] status] (= (:status job) status))
+(defn- seq-jobs [obj] (seq (:jobs (:state obj))))
+
+(defn analysis-submitted? [obj] (every? #(status-matches? % SUBMITTED) (seq-jobs obj)))
+(defn analysis-completed? [obj] (every? #(status-matches? % COMPLETED) (seq-jobs obj)))
+(defn analysis-running? [obj] (any? #(status-matches? % RUNNING) (seq-jobs obj)))
+(defn analysis-failed? [obj] (any? #(status-matches? % FAILED) (seq-jobs obj)))
+(defn analysis-held? [obj] (any? #(status-matches? % HELD) (seq-jobs obj)))
 
 (defn analysis-status
-  [clds]
+  [osm-obj]
   (cond
-    (analysis-failed? clds)    FAILED
-    (analysis-completed? clds) COMPLETED
-    (analysis-submitted? clds) SUBMITTED
-    (analysis-running? clds)   RUNNING
-    (analysis-held? clds)      HELD
-    :else                      IDLE))
+    (analysis-failed? osm-obj)    FAILED
+    (analysis-completed? osm-obj) COMPLETED
+    (analysis-submitted? osm-obj) SUBMITTED
+    (analysis-running? osm-obj)   RUNNING
+    (analysis-held? osm-obj)      HELD
+    :else                         IDLE))
 
 (defn classads-for-osm-object
   [osm-object all-classads]
@@ -158,17 +174,22 @@
         osm-jobs (:jobs (:state osm-object))]
     [cl-job-id (get osm-jobs cl-job-id)]))
 
-(defn jobs-map
+
+(defn jobs-maps
   [osm-obj classads]
   (apply merge (into [] (for [classad classads]
                           (let [[job-id job] (osm-job-for-classad classad osm-obj)]
                             (log/warn (str "JOB ID: " job-id "\tOSMID: " (:object_persistence_uuid osm-obj)))
-                            {job-id (assoc job :status (job-status classad))})))))
+                            {job-id (assoc job :status (de-job-status classad)
+                                               :exit-code (get classad "ExitCode")
+                                               :exit-by-signal (get classad "ExitBySignal"))})))))
 
 (defn update-jobs
   [osm-obj classads]
-  (let [osm-jobs (jobs-map osm-obj classads)]
-    (assoc-in osm-obj [:state :jobs] osm-jobs)))
+  (let [osm-jobs     (jobs-maps osm-obj classads)
+        all-osm-jobs (:jobs (:state osm-obj))
+        merged-jobs  (apply merge (into [] (flatten [all-osm-jobs osm-jobs])))]
+    (assoc-in osm-obj [:state :jobs] merged-jobs)))
 
 (defn update-osm-objects
   [osm-objects all-classads]
@@ -178,8 +199,10 @@
              #(not (nil? %)) 
              (for [osm-obj osm-objects]
                (let [classads (classads-for-osm-object osm-obj all-classads)]
-                 (if (> (count classads) 0) 
-                   (assoc-in (update-jobs osm-obj classads) [:state :status] (analysis-status classads))))))))
+                 (if (> (count classads) 0)
+                   (let [updated-jobs (update-jobs osm-obj classads)
+                         a-status     (analysis-status updated-jobs)]
+                     (assoc-in updated-jobs [:state :status] a-status))))))))
 
 (defn filter-classads
   [classads]

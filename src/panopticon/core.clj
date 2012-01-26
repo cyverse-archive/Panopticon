@@ -56,17 +56,13 @@
   (doseq [osm-object osm-objects]
     (let [new-state (:state osm-object)
           osm-id    (:object_persistence_uuid osm-object)]
-      (log/info (str "OSM Posting " osm-id ": "))
       (if (nil? osm-id)
         (log/info (str "OSM state" new-state)))
       (osm/update-object (osm-client) osm-id new-state))))
 
 (defn classad-lines
   [classad-str]
-  (into [] 
-        (filter 
-          #(not (re-find #"^--" %)) 
-          (-> classad-str (string/split #"\n")))))
+  (into [] (filter #(not (re-find #"^--" %)) (-> classad-str (string/split #"\n")))))
 
 (defn classad-maps
   [job-output]
@@ -81,9 +77,7 @@
                                        (string/replace #"\"$" ""))]
                         {cl-key cl-val}))))))
 
-(defn constraint
-  [uuid]
-  ["-constraint" (str "IpcUuid ==\"" uuid "\"")])
+(defn constraint [uuid] ["-constraint" (str "IpcUuid ==\"" uuid "\"")])
 
 (defn history
   [uuids]
@@ -135,13 +129,6 @@
       (org.apache.commons.io.FileUtils/deleteDirectory dobj)
       (catch java.lang.Exception e
         (log/warn e)))))
-
-(defn parallel-func
-  [func uuids]
-  (let [anon-funcs (into [] (map #(partial (comp classad-maps func) %) uuids))]
-    (into [] (flatten 
-               (for [func-part (partition-all (num-instances) anon-funcs)]
-                 (apply pcalls func-part))))))
 
 (defn job-failed?
   [classad-map]
@@ -222,8 +209,6 @@
 
 (defn update-osm-objects
   [osm-objects all-classads]
-  (log/info (str "OSM COUNT: " (count osm-objects)))
-  (log/warn (into [] (map #(get % "IpcJobId") all-classads)))
   (into [] (filter 
              #(not (nil? %)) 
              (for [osm-obj osm-objects]
@@ -257,9 +242,7 @@
           (rm-dir ldir)))))
   osm-objects)
 
-(defn filter-classads
-  [classads]
-  (into [] (filter #(contains? % "IpcUuid") classads)))
+(defn filter-classads [classads] (into [] (filter #(contains? % "IpcUuid") classads)))
 
 (defn -main
   [& args]
@@ -282,10 +265,8 @@
   (loop []
     (let [osm-objects (running-jobs)]
       (when (> (count osm-objects) 0)
-        (let [osm-uuids   (into [] (map #(:uuid (:state %)) osm-objects))
-              classads    (filter-classads (concat 
-                                             (queue osm-uuids)
-                                             (history osm-uuids)))]
+        (let [osm-uuids (into [] (map #(:uuid (:state %)) osm-objects))
+              classads  (filter-classads (concat (queue osm-uuids) (history osm-uuids)))]
           (-> osm-objects
             (update-osm-objects classads)
             (cleanup)

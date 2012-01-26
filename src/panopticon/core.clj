@@ -246,18 +246,15 @@
         (do (condor-rm dag-id)
           (transfer wdir odir)
           (transfer ldir odir)
-          (rm-dir ldir)
-          (rm-dir wdir))
+          (rm-dir ldir))
         
         (= jstatus FAILED)
         (do (transfer ldir odir)
-          (rm-dir ldir)
-          (rm-dir wdir))
+          (rm-dir ldir))
         
         (= jstatus COMPLETED)
         (do  (transfer ldir odir)
-          (rm-dir ldir)
-          (rm-dir wdir)))))
+          (rm-dir ldir)))))
   osm-objects)
 
 (defn filter-classads

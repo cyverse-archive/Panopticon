@@ -3,9 +3,11 @@
   (:require [clojure-commons.osm :as osm]
             [clojure-commons.props :as props]
             [clojure-commons.clavin-client :as cl]
+            [clojure-commons.file-utils :as ft]
             [clojure.tools.logging :as log]
             [clojure.data.json :as json]
             [clojure.java.shell :as sh]
+            [clojure.java.io :as io]
             [clojure.string :as string]))
 
 (def props (atom nil))
@@ -58,17 +60,13 @@
   (doseq [osm-object osm-objects]
     (let [new-state (:state osm-object)
           osm-id    (:object_persistence_uuid osm-object)]
-      (log/info (str "OSM Posting " osm-id ": "))
       (if (nil? osm-id)
         (log/info (str "OSM state" new-state)))
       (osm/update-object (osm-client) osm-id new-state))))
 
 (defn classad-lines
   [classad-str]
-  (into [] 
-        (filter 
-          #(not (re-find #"^--" %)) 
-          (-> classad-str (string/split #"\n")))))
+  (into [] (filter #(not (re-find #"^--" %)) (-> classad-str (string/split #"\n")))))
 
 (defn classad-maps
   [job-output]
@@ -83,9 +81,7 @@
                                        (string/replace #"\"$" ""))]
                         {cl-key cl-val}))))))
 
-(defn constraint
-  [uuid]
-  ["-constraint" (str "IpcUuid ==\"" uuid "\"")])
+(defn constraint [uuid] ["-constraint" (str "IpcUuid ==\"" uuid "\"")])
 
 (defn history
   [uuids]
@@ -111,12 +107,32 @@
     (log/info (str "stdout: " (:out results)))
     (classad-maps (string/trim (:out results)))))
 
-(defn parallel-func
-  [func uuids]
-  (let [anon-funcs (into [] (map #(partial (comp classad-maps func) %) uuids))]
-    (into [] (flatten 
-               (for [func-part (partition-all (num-instances) anon-funcs)]
-                 (apply pcalls func-part))))))
+(defn condor-rm
+  [dag-id]
+  (let [cmd ["condor_rm" dag-id]
+        results (apply sh/sh cmd)]
+    (log/warn cmd)
+    (log/warn (str "Exit Code: " (:exit results)))
+    (log/warn (str "stderr: " (:err results)))
+    (log/warn (str "stdout: " (:out results)))))
+
+(defn transfer
+  [source-dir output-dir]
+  (when (ft/exists? source-dir)
+    (let [cmd     ["/usr/local/bin/handle_error.sh" source-dir output-dir "1"]
+          results (apply sh/sh cmd)]
+      (log/warn cmd)
+      (log/warn (str "Exit Code: " (:exit results)))
+      (log/warn (str "stderr: " (:err results)))
+      (log/warn (str "stdout: " (:out results))))))
+
+(defn rm-dir
+  [dir-path]
+  (let [dobj (clojure.java.io/file dir-path)]
+    (try
+      (org.apache.commons.io.FileUtils/deleteDirectory dobj)
+      (catch java.lang.Exception e
+        (log/warn e)))))
 
 (defn job-failed?
   [classad-map]
@@ -135,21 +151,37 @@
       (and (= job-status COMPLETED) (not= exit-code "0")) true
       :else true)))
 
-(defn analysis-submitted? [clds] (every? #(= (job-status %) SUBMITTED) clds))
-(defn analysis-completed? [clds] (every? #(= (job-status %) COMPLETED) clds))
-(defn analysis-running? [clds] (any? #(= (job-status %) RUNNING) clds))
-(defn analysis-failed? [clds] (any? job-failed? clds))
-(defn analysis-held? [clds] (any? #(= (job-status %) HELD) clds))
+(defn de-job-status
+  [classad]
+  (let [condor-status  (job-status classad)
+        exit-by-signal (boolize (get classad "ExitBySignal"))
+        exit-code      (get classad "ExitCode")]
+    (cond
+      (and (= condor-status COMPLETED) exit-by-signal)       FAILED
+      (and (= condor-status COMPLETED) (not= exit-code "0")) FAILED
+      (= condor-status HELD)    FAILED
+      (= condor-status SUBERR)  FAILED
+      (= condor-status REMOVED) FAILED
+      :else                     condor-status)))
+
+(defn- status-matches? [[job-key job] status] (= (:status job) status))
+(defn- seq-jobs [obj] (seq (:jobs (:state obj))))
+
+(defn analysis-submitted? [obj] (every? #(status-matches? % SUBMITTED) (seq-jobs obj)))
+(defn analysis-completed? [obj] (every? #(status-matches? % COMPLETED) (seq-jobs obj)))
+(defn analysis-running? [obj] (any? #(status-matches? % RUNNING) (seq-jobs obj)))
+(defn analysis-failed? [obj] (any? #(status-matches? % FAILED) (seq-jobs obj)))
+(defn analysis-held? [obj] (any? #(status-matches? % HELD) (seq-jobs obj)))
 
 (defn analysis-status
-  [clds]
+  [osm-obj]
   (cond
-    (analysis-failed? clds)    FAILED
-    (analysis-completed? clds) COMPLETED
-    (analysis-submitted? clds) SUBMITTED
-    (analysis-running? clds)   RUNNING
-    (analysis-held? clds)      HELD
-    :else                      IDLE))
+    (analysis-failed? osm-obj)    FAILED
+    (analysis-completed? osm-obj) COMPLETED
+    (analysis-submitted? osm-obj) SUBMITTED
+    (analysis-running? osm-obj)   RUNNING
+    (analysis-held? osm-obj)      HELD
+    :else                         IDLE))
 
 (defn classads-for-osm-object
   [osm-object all-classads]
@@ -162,32 +194,59 @@
         osm-jobs (:jobs (:state osm-object))]
     [cl-job-id (get osm-jobs cl-job-id)]))
 
-(defn jobs-map
+
+(defn jobs-maps
   [osm-obj classads]
   (apply merge (into [] (for [classad classads]
                           (let [[job-id job] (osm-job-for-classad classad osm-obj)]
                             (log/warn (str "JOB ID: " job-id "\tOSMID: " (:object_persistence_uuid osm-obj)))
-                            {job-id (assoc job :status (job-status classad))})))))
+                            {job-id (assoc job :status (de-job-status classad)
+                                               :exit-code (get classad "ExitCode")
+                                               :exit-by-signal (get classad "ExitBySignal"))})))))
 
 (defn update-jobs
   [osm-obj classads]
-  (let [osm-jobs (jobs-map osm-obj classads)]
-    (assoc-in osm-obj [:state :jobs] osm-jobs)))
+  (let [osm-jobs     (jobs-maps osm-obj classads)
+        all-osm-jobs (:jobs (:state osm-obj))
+        merged-jobs  (apply merge (into [] (flatten [all-osm-jobs osm-jobs])))]
+    (assoc-in osm-obj [:state :jobs] merged-jobs)))
 
 (defn update-osm-objects
   [osm-objects all-classads]
-  (log/info (str "OSM COUNT: " (count osm-objects)))
-  (log/warn (into [] (map #(get % "IpcJobId") all-classads)))
   (into [] (filter 
              #(not (nil? %)) 
              (for [osm-obj osm-objects]
                (let [classads (classads-for-osm-object osm-obj all-classads)]
-                 (if (> (count classads) 0) 
-                   (assoc-in (update-jobs osm-obj classads) [:state :status] (analysis-status classads))))))))
+                 (if (> (count classads) 0)
+                   (let [updated-jobs (update-jobs osm-obj classads)
+                         a-status     (analysis-status updated-jobs)]
+                     (assoc-in updated-jobs [:state :status] a-status))))))))
 
-(defn filter-classads
-  [classads]
-  (into [] (filter #(contains? % "IpcUuid") classads)))
+(defn cleanup
+  [osm-objects]
+  (doseq [osm-object osm-objects]
+    (let [jstatus (get-in osm-object [:state :status])
+          dag-id  (get-in osm-object [:state :dag_id])
+          ldir    (get-in osm-object [:state :condor-log-dir])
+          wdir    (get-in osm-object [:state :working_dir])
+          odir    (get-in osm-object [:state :output_dir])]
+      (cond
+        (= jstatus HELD)
+        (do (condor-rm dag-id)
+          (transfer wdir odir)
+          (transfer ldir odir)
+          (rm-dir ldir))
+        
+        (= jstatus FAILED)
+        (do (transfer ldir odir)
+          (rm-dir ldir))
+        
+        (= jstatus COMPLETED)
+        (do  (transfer ldir odir)
+          (rm-dir ldir)))))
+  osm-objects)
+
+(defn filter-classads [classads] (into [] (filter #(contains? % "IpcUuid") classads)))
 
 (defn -main
   [& args]
@@ -210,11 +269,10 @@
   (loop []
     (let [osm-objects (running-jobs)]
       (when (> (count osm-objects) 0)
-        (let [osm-uuids   (into [] (map #(:uuid (:state %)) osm-objects))
-              classads    (filter-classads (concat 
-                                             (queue osm-uuids)
-                                             (history osm-uuids)))]
+        (let [osm-uuids (into [] (map #(:uuid (:state %)) osm-objects))
+              classads  (filter-classads (concat (queue osm-uuids) (history osm-uuids)))]
           (-> osm-objects
             (update-osm-objects classads)
+            (cleanup)
             (post-osm-updates)))))
     (recur)))

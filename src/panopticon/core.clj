@@ -44,10 +44,14 @@
 
 (defn running-jobs 
   []
-  (let [query {"$or" [{"state.status" RUNNING} 
-                      {"state.status" SUBMITTED}
-                      {"state.status" IDLE}]}]
-    (:objects (json/read-json (osm/query (osm-client) query)))))
+  (try
+    (let [query {"$or" [{"state.status" RUNNING} 
+                        {"state.status" SUBMITTED}
+                        {"state.status" IDLE}]}]
+      (:objects (json/read-json (osm/query (osm-client) query))))
+    (catch java.lang.Exception e
+      (log/warn e)
+      [])))
 
 (defn post-osm-updates
   [osm-objects]

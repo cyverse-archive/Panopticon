@@ -125,9 +125,9 @@
 (defn transfer
   [source-dir output-dir]
   (when (ft/exists? source-dir)
-    (let [cmd     ["/usr/local/bin/handle_error.sh" source-dir output-dir "1"]
-          results (apply sh/sh cmd)]
-      (log/warn cmd)
+    (let [exect    "/usr/local/bin/filetool"
+          results (sh/sh exect "-source" source-dir "-destination" output-dir)]
+      (log/warn (str exect " -source " source-dir " -destination " output-dir))
       (log/warn (str "Exit Code: " (:exit results)))
       (log/warn (str "stderr: " (:err results)))
       (log/warn (str "stdout: " (:out results))))))
@@ -248,7 +248,8 @@
           (rm-dir ldir))
         
         (= jstatus COMPLETED)
-        (do  (transfer ldir odir)
+        (do (transfer wdir odir)  
+          (transfer ldir odir)
           (rm-dir ldir)))))
   osm-objects)
 

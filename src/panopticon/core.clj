@@ -81,15 +81,28 @@
                                        (string/replace #"\"$" ""))]
                         {cl-key cl-val}))))))
 
-(defn constraint [uuid] ["-constraint" (str "IpcUuid ==\"" uuid "\"")])
+(defn constraint [uuid] (str "IpcUuid ==\"" uuid "\""))
+
+(defn- run-history
+  [uuid]
+  (let [const   (constraint uuid)
+        results (sh/sh "condor_history" "-l" "-constraint" const)]
+    (log/warn (str "condor_history -l --constraint " const))
+    (log/info (str "Exit Code: " (:exit results)))
+    (log/info (str "stderr: " (:err results)))
+    (log/info (str "stdout: " (:out results)))
+    (classad-maps (string/trim (:out results)))))
 
 (defn history
   [uuids]
   (log/warn (count uuids))
-  (let [consts   (into [] (flatten (map constraint uuids)))
-        cmd      (concat ["condor_history" "-l"] consts)
-        results  (apply sh/sh cmd)]
-    (log/warn cmd)
+  (into [] (flatten (pmap run-history uuids))))
+
+(defn- run-queue
+  [uuid]
+  (let [const   (constraint uuid)
+        results (sh/sh "condor_q" "-long" "-constraint" const)]
+    (log/warn (str "condor_q -long -constraint " const))
     (log/info (str "Exit Code: " (:exit results)))
     (log/info (str "stderr: " (:err results)))
     (log/info (str "stdout: " (:out results)))
@@ -98,14 +111,7 @@
 (defn queue
   [uuids]
   (log/warn (count uuids))
-  (let [consts   (into [] (flatten (map constraint uuids)))
-        cmd      (concat ["condor_q" "-long"] consts)
-        results  (apply sh/sh cmd)]
-    (log/warn cmd)
-    (log/info (str "Exit Code: " (:exit results)))
-    (log/info (str "stderr: " (:err results)))
-    (log/info (str "stdout: " (:out results)))
-    (classad-maps (string/trim (:out results)))))
+  (into [] (flatten (pmap run-queue uuids))))
 
 (defn condor-rm
   [dag-id]

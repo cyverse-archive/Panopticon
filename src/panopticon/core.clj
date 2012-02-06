@@ -38,13 +38,18 @@
 (defn condor-history [] (get @props "panopticon.condor.condor-history"))
 (defn num-instances [] (Integer/parseInt (get @props "panopticon.app.num-instances")))
 
+;Converts a string to a boolean.
 (def boolize #(boolean (Boolean. %)))
+
+;Kinda like (every?)
 (defn any? [pred coll] ((comp not not-any?) pred coll))
 
 (defn osm-client [] (osm/create (osm-url) (osm-coll)))
 (defn job-status [classad-map] (get JOBSTATUS (get classad-map "JobStatus")))
 
-(defn running-jobs 
+(defn running-jobs
+  "Queries the OSM for a list of jobs that are in the
+   Running, Submitted, or Idle states."
   []
   (try
     (let [query {"$or" [{"state.status" RUNNING} 
@@ -56,6 +61,14 @@
       [])))
 
 (defn post-osm-updates
+  "POSTs updated objects to the OSM. Input is a sequence of maps
+   in the form:
+
+   {:object_persistence_uuid string
+    :state {}}
+
+   In other words, you need to have the UUID associated with the
+   doc in the OSM and the new state of the object."
   [osm-objects]
   (doseq [osm-object osm-objects]
     (let [new-state (:state osm-object)
@@ -65,10 +78,17 @@
       (osm/update-object (osm-client) osm-id new-state))))
 
 (defn classad-lines
+  "Takes a string containing all of the classad information for a job
+   and returns a list of strings. It splits the input string on \n and
+   filters out any lines that begin with --."
   [classad-str]
   (into [] (filter #(not (re-find #"^--" %)) (-> classad-str (string/split #"\n")))))
 
 (defn classad-maps
+  "Transforms the output of either (queue) or (history) into
+   a sequence of maps. Basically, the classads are parse so
+   everything to the left of the first = is the key and
+   everything to the right is the value."
   [job-output]
   (into [] (for [classad-str (string/split job-output #"\n\n")]
              (apply merge 
@@ -84,6 +104,8 @@
 (defn constraint [uuid] (str "IpcUuid ==\"" uuid "\""))
 
 (defn- run-history
+  "Runs condor_history looking for single uuid, parses the output,
+   and returns a sequence of maps created by (classad-maps)."
   [uuid]
   (let [const   (constraint uuid)
         results (sh/sh "condor_history" "-l" "-constraint" const)]
@@ -94,11 +116,16 @@
     (classad-maps (string/trim (:out results)))))
 
 (defn history
+  "Iterates over the list of uuids and calls condor_history for each one.
+   Uses pmap to call condor_history. Returns a list of maps created by
+   (classad-maps)."
   [uuids]
   (log/warn (count uuids))
   (into [] (flatten (pmap run-history uuids))))
 
 (defn- run-queue
+  "Runs condor_q looking for a single uuid, parses the output,
+   and returns a sequence of maps created by (classad-maps)."
   [uuid]
   (let [const   (constraint uuid)
         results (sh/sh "condor_q" "-long" "-constraint" const)]
@@ -109,11 +136,15 @@
     (classad-maps (string/trim (:out results)))))
 
 (defn queue
+  "Iterates over the list of uuids and calls condor_q for each one.
+   Uses pmap to call condor_q. Returns a list of maps created by
+   (classad-maps)."
   [uuids]
   (log/warn (count uuids))
   (into [] (flatten (pmap run-queue uuids))))
 
 (defn condor-rm
+  "Calls condor_rm on a dag."
   [dag-id]
   (let [cmd ["condor_rm" dag-id]
         results (apply sh/sh cmd)]
@@ -123,6 +154,7 @@
     (log/warn (str "stdout: " (:out results)))))
 
 (defn transfer
+  "Calls filetool to transfer a directory of files into iRODS."
   [source-dir output-dir]
   (when (ft/exists? source-dir)
     (let [exect    "/usr/local/bin/filetool"
@@ -133,6 +165,8 @@
       (log/warn (str "stdout: " (:out results))))))
 
 (defn rm-dir
+  "Uses Apache Commons IO to recursively delete a directory. Does not play nice
+   with NFS mountpoints."
   [dir-path]
   (let [dobj (clojure.java.io/file dir-path)]
     (try
@@ -141,6 +175,10 @@
         (log/warn e)))))
 
 (defn job-failed?
+  "Takes in a single classad-map generated from (classad-maps)
+   and tells you whether the job failed or not. This is not a straight-forward
+   translation of the Condor job states, it uses ExitBySignal and ExitCode
+   to determine if a job in the COMPLETED state actually failed."
   [classad-map]
   (let [exit-by-signal (boolize (get classad-map "ExitBySignal"))
         exit-code      (get classad-map "ExitCode")
@@ -158,6 +196,8 @@
       :else true)))
 
 (defn de-job-status
+  "Takes in single classad-map generated from (classad-maps)
+   and translates the Condor failure into a DE job state."
   [classad]
   (let [condor-status  (job-status classad)
         exit-by-signal (boolize (get classad "ExitBySignal"))
@@ -174,37 +214,57 @@
 (defn- seq-jobs [obj] (seq (:jobs (:state obj))))
 
 (defn no-jobs-queued?
+  "Calls (queue) and determines if there are no more jobs remaining
+   in the queue for a DAG."
   [uuid]
   (let [queued (queue [uuid])]
     (and
       (= (count queued) 1)
       (nil? (first queued)))))
 
-(defn analysis-submitted? 
+(defn analysis-submitted?
+  "Takes in a map retrieved from the OSM and returns true
+   if it represents an analysis in the SUBMITTED state."
   [obj] 
   (every? #(status-matches? % SUBMITTED) (seq-jobs obj)))
 
 (defn analysis-completed? 
-  [obj] 
+  [obj]
+  "Takes in a map retrieved from the OSM and returns true
+   if it represents an analysis in the COMPLETED state.
+   Takes into account whether or not there are any more
+   jobs in the queue, which will hopefully avoid any race
+   conditions."
   (and
     (every? #(status-matches? % COMPLETED) (seq-jobs obj))
     (no-jobs-queued? (:uuid obj))))
 
-(defn analysis-running? 
+(defn analysis-running?
+  "Takes in a map retrieved from the OSM and returns true
+   if it represents an analysis in the RUNNING state."
   [obj] 
   (any? #(status-matches? % RUNNING) (seq-jobs obj)))
 
 (defn analysis-failed? 
+  "Takes in a map retrieved from the OSM and returns true
+   if it represents an analysis in the FAILED state.
+   Takes into account whether or not there are any more
+   jobs in the queue, which will hopefully avoid any race
+   conditions."
   [obj] 
   (and
     (any? #(status-matches? % FAILED) (seq-jobs obj))
     (no-jobs-queued? (:uuid obj))))
 
 (defn analysis-held? 
+  "Takes in a map retrieved from the OSM and returns true
+   if it represents an analysis in the FAILED state."
   [obj] 
   (any? #(status-matches? % HELD) (seq-jobs obj)))
 
 (defn analysis-status
+  "Takes in a map retrieved from the OSM and returns which
+   state the analysis is in."
   [osm-obj]
   (cond
     (analysis-failed? osm-obj)    FAILED

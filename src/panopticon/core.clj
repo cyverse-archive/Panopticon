@@ -241,16 +241,16 @@
         (do (condor-rm dag-id)
           (transfer wdir odir)
           (transfer ldir odir)
-          (rm-dir ldir))
+          (comment (rm-dir ldir)))
         
         (= jstatus FAILED)
         (do (transfer ldir odir)
-          (rm-dir ldir))
+          (comment (rm-dir ldir)))
         
         (= jstatus COMPLETED)
         (do (transfer wdir odir)  
           (transfer ldir odir)
-          (rm-dir ldir)))))
+          (comment (rm-dir ldir))))))
   osm-objects)
 
 (defn filter-classads [classads] (into [] (filter #(contains? % "IpcUuid") classads)))

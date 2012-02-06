@@ -173,11 +173,36 @@
 (defn- status-matches? [[job-key job] status] (= (:status job) status))
 (defn- seq-jobs [obj] (seq (:jobs (:state obj))))
 
-(defn analysis-submitted? [obj] (every? #(status-matches? % SUBMITTED) (seq-jobs obj)))
-(defn analysis-completed? [obj] (every? #(status-matches? % COMPLETED) (seq-jobs obj)))
-(defn analysis-running? [obj] (any? #(status-matches? % RUNNING) (seq-jobs obj)))
-(defn analysis-failed? [obj] (any? #(status-matches? % FAILED) (seq-jobs obj)))
-(defn analysis-held? [obj] (any? #(status-matches? % HELD) (seq-jobs obj)))
+(defn no-jobs-queued?
+  [uuid]
+  (let [queued (queue [uuid])]
+    (and
+      (= (count queued) 1)
+      (nil? (first queued)))))
+
+(defn analysis-submitted? 
+  [obj] 
+  (every? #(status-matches? % SUBMITTED) (seq-jobs obj)))
+
+(defn analysis-completed? 
+  [obj] 
+  (and
+    (every? #(status-matches? % COMPLETED) (seq-jobs obj))
+    (no-jobs-queued? (:uuid obj))))
+
+(defn analysis-running? 
+  [obj] 
+  (any? #(status-matches? % RUNNING) (seq-jobs obj)))
+
+(defn analysis-failed? 
+  [obj] 
+  (and
+    (any? #(status-matches? % FAILED) (seq-jobs obj))
+    (no-jobs-queued? (:uuid obj))))
+
+(defn analysis-held? 
+  [obj] 
+  (any? #(status-matches? % HELD) (seq-jobs obj)))
 
 (defn analysis-status
   [osm-obj]
@@ -241,16 +266,16 @@
         (do (condor-rm dag-id)
           (transfer wdir odir)
           (transfer ldir odir)
-          (comment (rm-dir ldir)))
+          (rm-dir ldir))
         
         (= jstatus FAILED)
         (do (transfer ldir odir)
-          (comment (rm-dir ldir)))
+          (rm-dir ldir))
         
         (= jstatus COMPLETED)
         (do (transfer wdir odir)  
           (transfer ldir odir)
-          (comment (rm-dir ldir))))))
+          (rm-dir ldir)))))
   osm-objects)
 
 (defn filter-classads [classads] (into [] (filter #(contains? % "IpcUuid") classads)))

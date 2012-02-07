@@ -297,12 +297,15 @@
    a new version of the :jobs sub-map with all of the jobs updated
    with info from the classads. Called by (update-jobs) below."
   [osm-obj classads]
-  (apply merge (into [] (for [classad classads]
-                          (let [[job-id job] (osm-job-for-classad classad osm-obj)]
-                            (log/warn (str "JOB ID: " job-id "\tOSMID: " (:object_persistence_uuid osm-obj)))
-                            {job-id (assoc job :status (de-job-status classad)
-                                               :exit-code (get classad "ExitCode")
-                                               :exit-by-signal (get classad "ExitBySignal"))})))))
+  (apply merge 
+    (into [] 
+      (for [classad classads]
+        (let [[job-id job] (osm-job-for-classad classad osm-obj)]
+          (log/warn (str "JOB ID: " job-id "\tOSMID: " (:object_persistence_uuid osm-obj)))
+          {job-id (assoc job 
+                    :status (de-job-status classad)
+                    :exit-code (get classad "ExitCode")
+                    :exit-by-signal (get classad "ExitBySignal"))})))))
 
 (defn update-jobs
   "Takes in an osm-object and a list of classad maps, updates the state
@@ -321,14 +324,15 @@
    (analysis-status) function is called to determine the overall state
    of an analysis."
   [osm-objects all-classads]
-  (into [] (filter 
-             #(not (nil? %)) 
-             (for [osm-obj osm-objects]
-               (let [classads (classads-for-osm-object osm-obj all-classads)]
-                 (if (> (count classads) 0)
-                   (let [updated-jobs (update-jobs osm-obj classads)
-                         a-status     (analysis-status updated-jobs)]
-                     (assoc-in updated-jobs [:state :status] a-status))))))))
+  (into [] 
+    (filter 
+      #(not (nil? %)) 
+      (for [osm-obj osm-objects]
+        (let [classads (classads-for-osm-object osm-obj all-classads)]
+          (if (> (count classads) 0)
+            (let [updated-jobs (update-jobs osm-obj classads)
+                  a-status     (analysis-status updated-jobs)]
+              (assoc-in updated-jobs [:state :status] a-status))))))))
 
 (defn cleanup
   "Takes in a list of osm-objects and performs clean up actions based on the
@@ -345,16 +349,13 @@
         (do (condor-rm dag-id)
           (transfer wdir odir)
           (transfer ldir odir)
-          (rm-dir ldir))
+          (comment (rm-dir ldir)))
         
-        (= jstatus FAILED)
-        (do (transfer ldir odir)
-          (rm-dir ldir))
-        
-        (= jstatus COMPLETED)
+        (or (= jstatus COMPLETED) 
+            (= jstatus FAILED))
         (do (transfer wdir odir)  
           (transfer ldir odir)
-          (rm-dir ldir)))))
+          (comment (rm-dir ldir))))))
   osm-objects)
 
 (defn filter-classads

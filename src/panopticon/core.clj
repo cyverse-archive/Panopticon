@@ -197,7 +197,7 @@
 
 (defn de-job-status
   "Takes in single classad-map generated from (classad-maps)
-   and translates the Condor failure into a DE job state."
+   and translates the Condor status into a DE job state."
   [classad]
   (let [condor-status  (job-status classad)
         exit-by-signal (boolize (get classad "ExitBySignal"))
@@ -275,11 +275,17 @@
     :else                         IDLE))
 
 (defn classads-for-osm-object
+  "Takes in an osm-object and a list of classad maps and filters
+   the classad maps down to just those that are pertinent to the
+   analysis represented by the osm-object."
   [osm-object all-classads]
   (let [osm-uuid (:uuid (:state osm-object))]
     (into [] (filter #(= (get % "IpcUuid") osm-uuid) all-classads))))
 
 (defn osm-job-for-classad
+  "Takes in a classad map and a osm-object and returns a vector-tuple
+   that lists the job id and the job map from the osm-objects' 
+   :jobs sub-map."
   [classad osm-object]
   (let [cl-job-id (keyword (get classad "IpcJobId"))
         osm-jobs (:jobs (:state osm-object))]
@@ -287,6 +293,9 @@
 
 
 (defn jobs-maps
+  "Takes in an osm-object and a list of classad maps and returns
+   a new version of the :jobs sub-map with all of the jobs updated
+   with info from the classads. Called by (update-jobs) below."
   [osm-obj classads]
   (apply merge (into [] (for [classad classads]
                           (let [[job-id job] (osm-job-for-classad classad osm-obj)]
@@ -296,6 +305,9 @@
                                                :exit-by-signal (get classad "ExitBySignal"))})))))
 
 (defn update-jobs
+  "Takes in an osm-object and a list of classad maps, updates the state
+   of the jobs in the osm-object, and returns a new version of the 
+   osm-object with the job changes applied."
   [osm-obj classads]
   (let [osm-jobs     (jobs-maps osm-obj classads)
         all-osm-jobs (:jobs (:state osm-obj))
@@ -303,6 +315,11 @@
     (assoc-in osm-obj [:state :jobs] merged-jobs)))
 
 (defn update-osm-objects
+  "Takes in a list of osm-objects and a list of classad maps. Returns
+   a list of osm-objects that have been updated with information from
+   the classads that apply to them. Incidentally, this is where the
+   (analysis-status) function is called to determine the overall state
+   of an analysis."
   [osm-objects all-classads]
   (into [] (filter 
              #(not (nil? %)) 
@@ -314,6 +331,8 @@
                      (assoc-in updated-jobs [:state :status] a-status))))))))
 
 (defn cleanup
+  "Takes in a list of osm-objects and performs clean up actions based on the
+   status of the analysis they represent."
   [osm-objects]
   (doseq [osm-object osm-objects]
     (let [jstatus (get-in osm-object [:state :status])
@@ -338,7 +357,12 @@
           (rm-dir ldir)))))
   osm-objects)
 
-(defn filter-classads [classads] (into [] (filter #(contains? % "IpcUuid") classads)))
+(defn filter-classads
+  "Simple function that filters a list of classad maps so
+   it only contains classad maps for jobs that were run through
+   the DE."
+  [classads] 
+  (into [] (filter #(contains? % "IpcUuid") classads)))
 
 (defn -main
   [& args]

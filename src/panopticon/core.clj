@@ -367,7 +367,7 @@
 
 (defn -main
   [& args]
-  (def zkprops (props/parse-properties "panopticon.properties"))
+  (def zkprops (props/parse-properties "zkhosts.properties"))
   (def zkurl (get zkprops "zookeeper"))
   
   (log/info "Starting up. Reading configuration from Zookeeper.")

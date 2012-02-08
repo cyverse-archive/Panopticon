@@ -43,7 +43,6 @@ install -d $RPM_BUILD_ROOT/etc/panopticon/
 install panopticon $RPM_BUILD_ROOT/etc/init.d/
 install panopticon-1.0.0-SNAPSHOT-standalone.jar $RPM_BUILD_ROOT/usr/local/lib/panopticon/
 install conf/log4j.properties $RPM_BUILD_ROOT/etc/panopticon/
-install conf/panopticon.properties $RPM_BUILD_ROOT/etc/panopticon/
 
 %post
 /sbin/chkconfig --add panopticon
@@ -62,6 +61,7 @@ fi
 %clean
 lein clean
 rm -r lib/*
+rm -r $RPM_BUILD_ROOT
 
 %files
 %attr(-,condor,condor) /usr/local/lib/panopticon/

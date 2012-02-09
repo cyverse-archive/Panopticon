@@ -145,8 +145,8 @@
 
 (defn condor-rm
   "Calls condor_rm on a dag."
-  [dag-id]
-  (let [cmd ["condor_rm" dag-id]
+  [sub-id]
+  (let [cmd ["condor_rm" sub-id]
         results (apply sh/sh cmd)]
     (log/warn cmd)
     (log/warn (str "Exit Code: " (:exit results)))
@@ -173,27 +173,6 @@
       (org.apache.commons.io.FileUtils/deleteDirectory dobj)
       (catch java.lang.Exception e
         (log/warn e)))))
-
-(defn job-failed?
-  "Takes in a single classad-map generated from (classad-maps)
-   and tells you whether the job failed or not. This is not a straight-forward
-   translation of the Condor job states, it uses ExitBySignal and ExitCode
-   to determine if a job in the COMPLETED state actually failed."
-  [classad-map]
-  (let [exit-by-signal (boolize (get classad-map "ExitBySignal"))
-        exit-code      (get classad-map "ExitCode")
-        job-status     (job-status classad-map)]
-    (cond
-      (= job-status REMOVED)    true
-      (= job-status HELD)       true
-      (= job-status SUBERR)     true
-      (= job-status SUBMITTED)  false
-      (= job-status UNEXPANDED) false
-      (= job-status IDLE)       false
-      (= job-status RUNNING)    false
-      (and (= job-status COMPLETED) exit-by-signal)       true
-      (and (= job-status COMPLETED) (not= exit-code "0")) true
-      :else true)))
 
 (defn de-job-status
   "Takes in single classad-map generated from (classad-maps)
@@ -222,58 +201,6 @@
       (= (count queued) 1)
       (nil? (first queued)))))
 
-(defn analysis-submitted?
-  "Takes in a map retrieved from the OSM and returns true
-   if it represents an analysis in the SUBMITTED state."
-  [obj] 
-  (every? #(status-matches? % SUBMITTED) (seq-jobs obj)))
-
-(defn analysis-completed? 
-  [obj]
-  "Takes in a map retrieved from the OSM and returns true
-   if it represents an analysis in the COMPLETED state.
-   Takes into account whether or not there are any more
-   jobs in the queue, which will hopefully avoid any race
-   conditions."
-  (and
-    (every? #(status-matches? % COMPLETED) (seq-jobs obj))
-    (no-jobs-queued? (:uuid obj))))
-
-(defn analysis-running?
-  "Takes in a map retrieved from the OSM and returns true
-   if it represents an analysis in the RUNNING state."
-  [obj] 
-  (any? #(status-matches? % RUNNING) (seq-jobs obj)))
-
-(defn analysis-failed? 
-  "Takes in a map retrieved from the OSM and returns true
-   if it represents an analysis in the FAILED state.
-   Takes into account whether or not there are any more
-   jobs in the queue, which will hopefully avoid any race
-   conditions."
-  [obj] 
-  (and
-    (any? #(status-matches? % FAILED) (seq-jobs obj))
-    (no-jobs-queued? (:uuid obj))))
-
-(defn analysis-held? 
-  "Takes in a map retrieved from the OSM and returns true
-   if it represents an analysis in the FAILED state."
-  [obj] 
-  (any? #(status-matches? % HELD) (seq-jobs obj)))
-
-(defn analysis-status
-  "Takes in a map retrieved from the OSM and returns which
-   state the analysis is in."
-  [osm-obj]
-  (cond
-    (analysis-failed? osm-obj)    FAILED
-    (analysis-completed? osm-obj) COMPLETED
-    (analysis-submitted? osm-obj) SUBMITTED
-    (analysis-running? osm-obj)   RUNNING
-    (analysis-held? osm-obj)      HELD
-    :else                         IDLE))
-
 (defn classads-for-osm-object
   "Takes in an osm-object and a list of classad maps and filters
    the classad maps down to just those that are pertinent to the
@@ -282,17 +209,7 @@
   (let [osm-uuid (:uuid (:state osm-object))]
     (into [] (filter #(= (get % "IpcUuid") osm-uuid) all-classads))))
 
-(defn osm-job-for-classad
-  "Takes in a classad map and a osm-object and returns a vector-tuple
-   that lists the job id and the job map from the osm-objects' 
-   :jobs sub-map."
-  [classad osm-object]
-  (let [cl-job-id (keyword (get classad "IpcJobId"))
-        osm-jobs (:jobs (:state osm-object))]
-    [cl-job-id (get osm-jobs cl-job-id)]))
-
-
-(defn jobs-maps
+(defn update-osm-obj
   "Takes in an osm-object and a list of classad maps and returns
    a new version of the :jobs sub-map with all of the jobs updated
    with info from the classads. Called by (update-jobs) below."
@@ -300,22 +217,10 @@
   (apply merge 
     (into [] 
       (for [classad classads]
-        (let [[job-id job] (osm-job-for-classad classad osm-obj)]
-          (log/warn (str "JOB ID: " job-id "\tOSMID: " (:object_persistence_uuid osm-obj)))
-          {job-id (assoc job 
-                    :status (de-job-status classad)
-                    :exit-code (get classad "ExitCode")
-                    :exit-by-signal (get classad "ExitBySignal"))})))))
-
-(defn update-jobs
-  "Takes in an osm-object and a list of classad maps, updates the state
-   of the jobs in the osm-object, and returns a new version of the 
-   osm-object with the job changes applied."
-  [osm-obj classads]
-  (let [osm-jobs     (jobs-maps osm-obj classads)
-        all-osm-jobs (:jobs (:state osm-obj))
-        merged-jobs  (apply merge (into [] (flatten [all-osm-jobs osm-jobs])))]
-    (assoc-in osm-obj [:state :jobs] merged-jobs)))
+        (-> osm-obj 
+          (assoc-in [:state :status] (de-job-status classad))
+          (assoc-in [:state :exit-code] (get classad "ExitCode"))
+          (assoc-in [:state :exit-by-signal] (get classad "ExitBySignal")))))))
 
 (defn update-osm-objects
   "Takes in a list of osm-objects and a list of classad maps. Returns
@@ -330,9 +235,7 @@
       (for [osm-obj osm-objects]
         (let [classads (classads-for-osm-object osm-obj all-classads)]
           (if (> (count classads) 0)
-            (let [updated-jobs (update-jobs osm-obj classads)
-                  a-status     (analysis-status updated-jobs)]
-              (assoc-in updated-jobs [:state :status] a-status))))))))
+            (update-osm-obj osm-obj classads)))))))
 
 (defn cleanup
   "Takes in a list of osm-objects and performs clean up actions based on the
@@ -340,13 +243,13 @@
   [osm-objects]
   (doseq [osm-object osm-objects]
     (let [jstatus (get-in osm-object [:state :status])
-          dag-id  (get-in osm-object [:state :dag_id])
+          sub-id  (get-in osm-object [:state :sub_id])
           ldir    (get-in osm-object [:state :condor-log-dir])
           wdir    (get-in osm-object [:state :working_dir])
           odir    (get-in osm-object [:state :output_dir])]
       (cond
         (= jstatus HELD)
-        (do (condor-rm dag-id)
+        (do (condor-rm sub-id)
           (transfer wdir odir)
           (transfer ldir odir)
           (comment (rm-dir ldir)))

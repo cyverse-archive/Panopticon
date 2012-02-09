@@ -71,7 +71,6 @@ rm -r $RPM_BUILD_ROOT
 %attr(-,condor,condor) /etc/panopticon/
 
 %config %attr(0644,condor,condor) /etc/panopticon/log4j.properties
-%config %attr(0644,condor,condor) /etc/panopticon/panopticon.properties
 
 %attr(0755,root,root) /etc/init.d/panopticon
 %attr(0644,condor,condor) /usr/local/lib/panopticon/panopticon-1.0.0-SNAPSHOT-standalone.jar

@@ -249,15 +249,22 @@
           odir    (get-in osm-object [:state :output_dir])]
       (cond
         (= jstatus HELD)
-        (do (condor-rm sub-id)
-          (transfer wdir odir)
-          (transfer ldir odir)
+        (do 
+          (when jstatus
+            (condor-rm sub-id)) 
+          (when (and wdir odir) 
+            (transfer wdir odir))
+          (when (and ldir odir) 
+            (transfer ldir odir))
           (comment (rm-dir ldir)))
         
         (or (= jstatus COMPLETED) 
             (= jstatus FAILED))
-        (do (transfer wdir odir)  
-          (transfer ldir odir)
+        (do 
+          (when (and wdir odir) 
+            (transfer wdir odir))  
+          (when (and ldir odir) 
+            (transfer ldir odir))
           (comment (rm-dir ldir))))))
   osm-objects)
 

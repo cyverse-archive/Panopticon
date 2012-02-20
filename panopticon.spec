@@ -13,9 +13,7 @@ Group: Applications
 BuildRoot: %{_tmppath}/%{name}-%{version}-buildroot
 License: BSD
 Provides: panopticon
-Requires: iplant-service-config
-Requires: iplant-filetool2 >= 0.1.0-4
-Conflicts: iplant-filetool2 <= 0.1.0-3
+Requires: iplant-service-config >= 0.1.0-4, iplant-filetool2
 Source0: %{name}-%{version}.tar.gz
 
 %description

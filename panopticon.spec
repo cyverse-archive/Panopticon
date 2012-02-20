@@ -6,7 +6,7 @@
 Summary: panopticon
 Name: panopticon
 Version: 0.1.0
-Release: 4
+Release: 5
 Epoch: 0
 BuildArchitectures: noarch
 Group: Applications
@@ -14,6 +14,7 @@ BuildRoot: %{_tmppath}/%{name}-%{version}-buildroot
 License: BSD
 Provides: panopticon
 Requires: iplant-service-config
+Requires: iplant-filetool2
 Source0: %{name}-%{version}.tar.gz
 
 %description

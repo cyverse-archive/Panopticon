@@ -293,6 +293,13 @@
   
   (log/info "Done reading configuration from Zookeeper.")
   (log/info (str "OSM Client: " (osm-client)))
+  
+  (log/warn "Checking for filetool...")  
+  (when (not (ft/exists? "/usr/local/bin/filetool"))
+    (log/warn "Could not find /usr/local/bin/filetool. Exiting")
+    (System/exit 1))
+  (log/warn "filetool found.")
+  
   (loop []
     (let [osm-objects (running-jobs)]
       (when (> (count osm-objects) 0)

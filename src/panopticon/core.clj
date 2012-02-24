@@ -220,7 +220,8 @@
   [osm-obj]
   (let [curr-status (get-in osm-obj [:state :status])]
     (if (or (= curr-status COMPLETED) (= curr-status FAILED) (= curr-status HELD))
-      (assoc-in osm-obj [:state :completion_date] (ctf/unparse date-formatter (ct/now))))))
+      (assoc-in osm-obj [:state :completion_date] (ctf/unparse date-formatter (ct/now)))
+      osm-obj)))
 
 (defn add-held-status
   "Takes in an osm-object and a classad and sets the [:state :held] field to true
@@ -274,7 +275,8 @@
           odir    (get-in osm-object [:state :output_dir])]
       (cond
         held?
-        (do 
+        (do
+          (log/warn (str "Analysis " sub-id " is in the HELD state."))
           (when sub-id
             (condor-rm sub-id)) 
           (when (and wdir odir) 

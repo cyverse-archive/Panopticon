@@ -8,7 +8,9 @@
             [clojure.data.json :as json]
             [clojure.java.shell :as sh]
             [clojure.java.io :as io]
-            [clojure.string :as string]))
+            [clojure.string :as string]
+            [clj-time.core :as ct]
+            [clj-time.format :as ctf]))
 
 (def props (atom nil))
 
@@ -209,6 +211,26 @@
   (let [osm-uuid (:uuid (:state osm-object))]
     (into [] (filter #(= (get % "IpcUuid") osm-uuid) all-classads))))
 
+(def date-formatter  
+  (ctf/formatter "EEE MMM dd YYYY HH:mm:ss 'GMT'Z (z)" (ct/default-time-zone))) 
+
+(defn add-completion-date
+  "Takes in an osm-obj and adds the completion date if the analysis
+   the osm-obj represents is in the COMPLETED or FAILED states."
+  [osm-obj]
+  (let [curr-status (get-in osm-obj [:state :status])]
+    (if (or (= curr-status COMPLETED) (= curr-status FAILED) (= curr-status HELD))
+      (assoc-in osm-obj [:state :completion_date] (ctf/unparse date-formatter (ct/now))))))
+
+(defn add-held-status
+  "Takes in an osm-object and a classad and sets the [:state :held] field to true
+   or false depending on whether the job is HELD."
+  [osm-obj classad]
+  (let [condor-status (job-status classad)]
+    (if (= condor-status HELD)
+      (assoc-in osm-obj [:state :held] true)
+      (assoc-in osm-obj [:state :held] false))))
+
 (defn update-osm-obj
   "Takes in an osm-object and a list of classad maps and returns
    a new version of the :jobs sub-map with all of the jobs updated
@@ -220,7 +242,9 @@
         (-> osm-obj 
           (assoc-in [:state :status] (de-job-status classad))
           (assoc-in [:state :exit-code] (get classad "ExitCode"))
-          (assoc-in [:state :exit-by-signal] (get classad "ExitBySignal")))))))
+          (assoc-in [:state :exit-by-signal] (get classad "ExitBySignal"))
+          add-completion-date
+          (add-held-status classad))))))
 
 (defn update-osm-objects
   "Takes in a list of osm-objects and a list of classad maps. Returns
@@ -243,14 +267,15 @@
   [osm-objects]
   (doseq [osm-object osm-objects]
     (let [jstatus (get-in osm-object [:state :status])
+          held?   (get-in osm-object [:state :held])
           sub-id  (get-in osm-object [:state :sub_id])
           ldir    (get-in osm-object [:state :condor-log-dir])
           wdir    (get-in osm-object [:state :working_dir])
           odir    (get-in osm-object [:state :output_dir])]
       (cond
-        (= jstatus HELD)
+        held?
         (do 
-          (when jstatus
+          (when sub-id
             (condor-rm sub-id)) 
           (when (and wdir odir) 
             (transfer wdir odir))

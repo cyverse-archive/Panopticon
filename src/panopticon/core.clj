@@ -272,7 +272,9 @@
           sub-id  (get-in osm-object [:state :sub_id])
           ldir    (get-in osm-object [:state :condor-log-dir])
           wdir    (get-in osm-object [:state :working_dir])
-          odir    (get-in osm-object [:state :output_dir])]
+          odir    (get-in osm-object [:state :output_dir])
+          monitor (get-in osm-object [:state :monitor_transfer_logs])
+          xfer?   (if (nil? monitor) true monitor)]
       (cond
         held?
         (do
@@ -285,12 +287,19 @@
             (transfer ldir odir))
           (comment (rm-dir ldir)))
         
-        (or (= jstatus COMPLETED) 
-            (= jstatus FAILED))
+        (= jstatus FAILED)
         (do 
           (when (and wdir odir) 
             (transfer wdir odir))  
           (when (and ldir odir) 
+            (transfer ldir odir))
+          (comment (rm-dir ldir)))
+        
+        (= jstatus COMPLETED)
+        (do 
+          (when (and wdir odir xfer?) 
+            (transfer wdir odir))  
+          (when (and ldir odir xfer?) 
             (transfer ldir odir))
           (comment (rm-dir ldir))))))
   osm-objects)

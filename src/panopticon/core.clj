@@ -1,5 +1,6 @@
 (ns panopticon.core
   (:gen-class)
+  (:use [clojure-commons.error-codes])
   (:require [clojure-commons.osm :as osm]
             [clojure-commons.props :as props]
             [clojure-commons.clavin-client :as cl]
@@ -73,11 +74,14 @@
    doc in the OSM and the new state of the object."
   [osm-objects]
   (doseq [osm-object osm-objects]
-    (let [new-state (:state osm-object)
-          osm-id    (:object_persistence_uuid osm-object)]
-      (if (nil? osm-id)
-        (log/info (str "OSM state" new-state)))
-      (osm/update-object (osm-client) osm-id new-state))))
+    (try
+      (let [new-state (:state osm-object)
+            osm-id    (:object_persistence_uuid osm-object)]
+        (if (nil? osm-id)
+          (log/info (str "OSM state" new-state)))
+        (osm/update-object (osm-client) osm-id new-state))
+      (catch java.lang.Exception e
+        (log/warn (format-exception e))))))
 
 (defn classad-lines
   "Takes a string containing all of the classad information for a job
@@ -337,12 +341,15 @@
   (log/warn "filetool found.")
   
   (loop []
-    (let [osm-objects (running-jobs)]
-      (when (> (count osm-objects) 0)
-        (let [osm-uuids (into [] (map #(:uuid (:state %)) osm-objects))
-              classads  (filter-classads (concat (queue osm-uuids) (history osm-uuids)))]
-          (-> osm-objects
-            (update-osm-objects classads)
-            (cleanup)
-            (post-osm-updates)))))
+    (try
+      (let [osm-objects (running-jobs)]
+        (when (> (count osm-objects) 0)
+          (let [osm-uuids (into [] (map #(:uuid (:state %)) osm-objects))
+                classads  (filter-classads (concat (queue osm-uuids) (history osm-uuids)))]
+            (-> osm-objects
+              (update-osm-objects classads)
+              (cleanup)
+              (post-osm-updates)))))
+      (catch java.lang.Exception e
+        (log/warn (format-exception e))))
     (recur)))

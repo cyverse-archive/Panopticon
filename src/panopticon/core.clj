@@ -160,12 +160,12 @@
     (log/warn (str "stdout: " (:out results)))))
 
 (defn transfer
-  "Calls filetool to transfer a directory of files into iRODS."
-  [source-dir output-dir]
+  "Calls porklock to transfer a directory of files into iRODS."
+  [source-dir output-dir user]
   (when (ft/exists? source-dir)
-    (let [exect    "/usr/local/bin/filetool"
-          results (sh/sh exect "-source" source-dir "-destination" output-dir)]
-      (log/warn (str exect " -source " source-dir " -destination " output-dir))
+    (let [exect    "/usr/local/bin/porklock"
+          results (sh/sh exect "put" "--user" user "--source" source-dir "--destination" output-dir :dir source-dir)]
+      (log/warn (str exect " put --user " user " --source " source-dir " --destination " output-dir :dir source-dir))
       (log/warn (str "Exit Code: " (:exit results)))
       (log/warn (str "stderr: " (:err results)))
       (log/warn (str "stdout: " (:out results))))))
@@ -278,6 +278,7 @@
           wdir    (get-in osm-object [:state :working_dir])
           odir    (get-in osm-object [:state :output_dir])
           monitor (get-in osm-object [:state :monitor_transfer_logs])
+          user    (get-in osm-object [:state :user])
           xfer?   (if (nil? monitor) true monitor)]
       (cond
         held?
@@ -286,25 +287,25 @@
           (when sub-id
             (condor-rm sub-id)) 
           (when (and wdir odir) 
-            (transfer wdir odir))
+            (transfer wdir odir user))
           (when (and ldir odir) 
-            (transfer ldir odir))
+            (transfer ldir odir user))
           (comment (rm-dir ldir)))
         
         (= jstatus FAILED)
         (do 
           (when (and wdir odir) 
-            (transfer wdir odir))  
+            (transfer wdir odir user))  
           (when (and ldir odir) 
-            (transfer ldir odir))
+            (transfer ldir odir user))
           (comment (rm-dir ldir)))
         
         (= jstatus COMPLETED)
         (do 
           (when (and wdir odir xfer?) 
-            (transfer wdir odir))  
+            (transfer wdir odir user))  
           (when (and ldir odir xfer?) 
-            (transfer ldir odir))
+            (transfer ldir odir user))
           (comment (rm-dir ldir))))))
   osm-objects)
 
@@ -334,11 +335,11 @@
   (log/info "Done reading configuration from Zookeeper.")
   (log/info (str "OSM Client: " (osm-client)))
   
-  (log/warn "Checking for filetool...")  
-  (when (not (ft/exists? "/usr/local/bin/filetool"))
-    (log/warn "Could not find /usr/local/bin/filetool. Exiting")
+  (log/warn "Checking for porklock...")  
+  (when (not (ft/exists? "/usr/local/bin/porklock"))
+    (log/warn "Could not find /usr/local/bin/porklock. Exiting")
     (System/exit 1))
-  (log/warn "filetool found.")
+  (log/warn "porklock found.")
   
   (loop []
     (try

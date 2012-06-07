@@ -13,7 +13,7 @@ Group: Applications
 BuildRoot: %{_tmppath}/%{name}-%{version}-buildroot
 License: BSD
 Provides: panopticon
-Requires: iplant-service-config >= 0.1.0-4, porklock
+Requires: iplant-service-config >= 0.1.0-5, porklock
 Source0: %{name}-%{version}.tar.gz
 
 %description

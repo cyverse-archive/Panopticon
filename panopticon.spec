@@ -6,7 +6,7 @@
 Summary: panopticon
 Name: panopticon
 Version: 0.1.0
-Release: 10
+Release: 11
 Epoch: 0
 BuildArchitectures: noarch
 Group: Applications

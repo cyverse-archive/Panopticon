@@ -127,7 +127,7 @@
    (classad-maps)."
   [uuids]
   (log/warn (count uuids))
-  (into [] (flatten (pmap run-history uuids))))
+  (into [] (flatten (map run-history uuids))))
 
 (defn- run-queue
   "Runs condor_q looking for a single uuid, parses the output,
@@ -147,7 +147,7 @@
    (classad-maps)."
   [uuids]
   (log/warn (count uuids))
-  (into [] (flatten (pmap run-queue uuids))))
+  (into [] (flatten (map run-queue uuids))))
 
 (defn condor-rm
   "Calls condor_rm on a dag."

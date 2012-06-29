@@ -88,7 +88,9 @@
    and returns a list of strings. It splits the input string on \n and
    filters out any lines that begin with --."
   [classad-str]
-  (into [] (filter #(not (re-find #"^--" %)) (-> classad-str (string/split #"\n")))))
+  (filterv 
+    #(not (re-find #"^--" %)) 
+    (string/split classad-str #"\n")))
 
 (defn classad-maps
   "Transforms the output of either (queue) or (history) into
@@ -96,16 +98,18 @@
    everything to the left of the first = is the key and
    everything to the right is the value."
   [job-output]
-  (into [] (for [classad-str (string/split job-output #"\n\n")]
-             (apply merge 
-                    (for [classad-line (classad-lines classad-str)]
-                      (let [sections (string/split classad-line #"\=")
-                            cl-key   (string/trim (first sections))
-                            cl-val   (-> (string/join "=" (rest sections))
-                                       (string/trim)
-                                       (string/replace #"^\"" "")
-                                       (string/replace #"\"$" ""))]
-                        {cl-key cl-val}))))))
+  (vec 
+    (for [classad-str (string/split job-output #"\n\n")]
+      (apply 
+        merge 
+        (for [classad-line (classad-lines classad-str)]
+          (let [sections (string/split classad-line #"\=")
+                cl-key   (string/trim (first sections))
+                cl-val   (-> (string/join "=" (rest sections))
+                           (string/trim)
+                           (string/replace #"^\"" "")
+                           (string/replace #"\"$" ""))]
+            {cl-key cl-val}))))))
 
 (defn constraint [uuid] (str "IpcUuid ==\"" uuid "\""))
 
@@ -127,7 +131,7 @@
    (classad-maps)."
   [uuids]
   (log/warn (count uuids))
-  (into [] (flatten (map run-history uuids))))
+  (vec (flatten (map run-history uuids))))
 
 (defn- run-queue
   "Runs condor_q looking for a single uuid, parses the output,
@@ -147,12 +151,12 @@
    (classad-maps)."
   [uuids]
   (log/warn (count uuids))
-  (into [] (flatten (map run-queue uuids))))
+  (vec (flatten (map run-queue uuids))))
 
 (defn condor-rm
   "Calls condor_rm on a dag."
   [sub-id]
-  (let [cmd ["condor_rm" sub-id]
+  (let [cmd     ["condor_rm" sub-id]
         results (apply sh/sh cmd)]
     (log/warn cmd)
     (log/warn (str "Exit Code: " (:exit results)))
@@ -213,7 +217,7 @@
    analysis represented by the osm-object."
   [osm-object all-classads]
   (let [osm-uuid (:uuid (:state osm-object))]
-    (into [] (filter #(= (get % "IpcUuid") osm-uuid) all-classads))))
+    (filterv #(= (get % "IpcUuid") osm-uuid) all-classads)))
 
 (def date-formatter  
   (ctf/formatter "EEE MMM dd YYYY HH:mm:ss 'GMT'Z (z)" (ct/default-time-zone))) 
@@ -242,7 +246,7 @@
    with info from the classads. Called by (update-jobs) below."
   [osm-obj classads]
   (apply merge 
-    (into [] 
+    (vec
       (for [classad classads]
         (-> osm-obj 
           (assoc-in [:state :status] (de-job-status classad))
@@ -258,12 +262,12 @@
    (analysis-status) function is called to determine the overall state
    of an analysis."
   [osm-objects all-classads]
-  (into [] 
+  (vec 
     (filter 
       #(not (nil? %)) 
       (for [osm-obj osm-objects]
         (let [classads (classads-for-osm-object osm-obj all-classads)]
-          (if (> (count classads) 0)
+          (if (pos? (count classads))
             (update-osm-obj osm-obj classads)))))))
 
 (defn cleanup
@@ -314,7 +318,7 @@
    it only contains classad maps for jobs that were run through
    the DE."
   [classads] 
-  (into [] (filter #(contains? % "IpcUuid") classads)))
+  (vec (filter #(contains? % "IpcUuid") classads)))
 
 (defn -main
   [& args]
@@ -325,7 +329,7 @@
   
   (cl/with-zk
     zkurl
-    (when (not (cl/can-run?))
+    (when-not (cl/can-run?)
       (log/warn "THIS APPLICATION CANNOT RUN ON THIS MACHINE. SO SAYETH ZOOKEEPER.")
       (log/warn "THIS APPLICATION WILL NOT EXECUTE CORRECTLY.")
       (System/exit 1))
@@ -336,7 +340,7 @@
   (log/info (str "OSM Client: " (osm-client)))
   
   (log/warn "Checking for porklock...")  
-  (when (not (ft/exists? "/usr/local/bin/porklock"))
+  (when-not (ft/exists? "/usr/local/bin/porklock")
     (log/warn "Could not find /usr/local/bin/porklock. Exiting")
     (System/exit 1))
   (log/warn "porklock found.")
@@ -344,8 +348,8 @@
   (loop []
     (try
       (let [osm-objects (running-jobs)]
-        (when (> (count osm-objects) 0)
-          (let [osm-uuids (into [] (map #(:uuid (:state %)) osm-objects))
+        (when (pos? (count osm-objects))
+          (let [osm-uuids (mapv #(:uuid (:state %)) osm-objects)
                 classads  (filter-classads (concat (queue osm-uuids) (history osm-uuids)))]
             (-> osm-objects
               (update-osm-objects classads)

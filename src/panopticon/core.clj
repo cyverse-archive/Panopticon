@@ -34,12 +34,29 @@
    "5" HELD
    "6" SUBERR})
 
-(defn osm-url [] (get @props "panopticon.osm.url"))
-(defn osm-coll [] (get @props "panopticon.osm.collection"))
-(defn condor-config [] (get @props "panopticon.condor.condor-config"))
-(defn condor-q [] (get @props "panopticon.condor.condor-q"))
-(defn condor-history [] (get @props "panopticon.condor.condor-history"))
-(defn num-instances [] (Integer/parseInt (get @props "panopticon.app.num-instances")))
+(defn osm-url 
+  [] 
+  (get @props "panopticon.osm.url"))
+
+(defn osm-coll 
+  [] 
+  (get @props "panopticon.osm.collection"))
+
+(defn condor-config 
+  [] 
+  (get @props "panopticon.condor.condor-config"))
+
+(defn condor-q 
+  [] 
+  (get @props "panopticon.condor.condor-q"))
+
+(defn condor-history 
+  [] 
+  (get @props "panopticon.condor.condor-history"))
+
+(defn num-instances 
+  [] 
+  (Integer/parseInt (get @props "panopticon.app.num-instances")))
 
 ;Converts a string to a boolean.
 (def boolize #(boolean (Boolean. %)))
@@ -111,15 +128,21 @@
                            (string/replace #"\"$" ""))]
             {cl-key cl-val}))))))
 
-(defn constraint [uuid] (str "IpcUuid ==\"" uuid "\""))
+(defn constraint 
+  [uuid] 
+  (str "IpcUuid ==\"" uuid "\""))
+
+(defn all-constraints
+  [uuids]
+  (str (string/join " || " (mapv constraint uuids))))
 
 (defn- run-history
   "Runs condor_history looking for single uuid, parses the output,
    and returns a sequence of maps created by (classad-maps)."
-  [uuid]
-  (let [const   (constraint uuid)
-        results (sh/sh "condor_history" "-l" "-constraint" const)]
-    (log/warn (str "condor_history -l --constraint " const))
+  [uuids]
+  (let [args    ["condor_history" "-l" "-constraint" (all-constraints uuids)]
+        results (apply sh/sh args)]
+    (log/warn args)
     (log/info (str "Exit Code: " (:exit results)))
     (log/info (str "stderr: " (:err results)))
     (log/info (str "stdout: " (:out results)))
@@ -127,19 +150,20 @@
 
 (defn history
   "Iterates over the list of uuids and calls condor_history for each one.
-   Uses pmap to call condor_history. Returns a list of maps created by
+   Uses map to call condor_history. Returns a list of maps created by
    (classad-maps)."
   [uuids]
   (log/warn (count uuids))
-  (vec (flatten (map run-history uuids))))
+  (vec (flatten (run-history uuids)))
+  #_(vec (flatten (map run-history uuids))))
 
 (defn- run-queue
   "Runs condor_q looking for a single uuid, parses the output,
    and returns a sequence of maps created by (classad-maps)."
-  [uuid]
-  (let [const   (constraint uuid)
-        results (sh/sh "condor_q" "-long" "-constraint" const)]
-    (log/warn (str "condor_q -long -constraint " const))
+  [uuids]
+  (let [args    ["condor_q" "-long" "-constraint" (all-constraints uuids)]
+        results (apply sh/sh args)]
+    (log/warn args)
     (log/info (str "Exit Code: " (:exit results)))
     (log/info (str "stderr: " (:err results)))
     (log/info (str "stdout: " (:out results)))
@@ -151,7 +175,8 @@
    (classad-maps)."
   [uuids]
   (log/warn (count uuids))
-  (vec (flatten (map run-queue uuids))))
+  (vec (flatten (run-queue uuids)))
+  #_(vec (flatten (map run-queue uuids))))
 
 (defn condor-rm
   "Calls condor_rm on a dag."

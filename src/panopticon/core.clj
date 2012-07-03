@@ -58,6 +58,12 @@
   [] 
   (Integer/parseInt (get @props "panopticon.app.num-instances")))
 
+(defn part-size
+  []
+  (if (get @props "panopticon.app.partition-size")
+    (Integer/parseInt (get @props "panopticon.app.partition-size"))
+    10))
+
 ;Converts a string to a boolean.
 (def boolize #(boolean (Boolean. %)))
 
@@ -136,6 +142,14 @@
   [uuids]
   (str (string/join " || " (mapv constraint uuids))))
 
+(defn full-partition
+  "Partitions collection into a vectory of seqs part-size in length.
+   If the partition isn't clean, then the last seq will be smaller
+   than the rest. This prevents jobs from being missed. Note: 
+   (clojure.core/partition) is lazy, but this function is not."
+  [coll part-size]
+  (vec (partition part-size part-size [] coll)))
+
 (defn- run-history
   "Runs condor_history looking for single uuid, parses the output,
    and returns a sequence of maps created by (classad-maps)."
@@ -154,7 +168,7 @@
    (classad-maps)."
   [uuids]
   (log/warn (count uuids))
-  (vec (flatten (run-history uuids)))
+  (vec (flatten (map run-history (full-partition uuids (part-size)))))
   #_(vec (flatten (map run-history uuids))))
 
 (defn- run-queue
@@ -175,7 +189,7 @@
    (classad-maps)."
   [uuids]
   (log/warn (count uuids))
-  (vec (flatten (run-queue uuids)))
+  (vec (flatten (map run-queue (full-partition uuids (part-size)))))
   #_(vec (flatten (map run-queue uuids))))
 
 (defn condor-rm

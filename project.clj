@@ -12,4 +12,6 @@
                :config-files ["log4j.properties"]
                :config-path "conf"}
   :aot [panopticon.core]
-  :main panopticon.core)
+  :main panopticon.core
+  :repositories {"iplantCollaborative"
+                 "http://projects.iplantcollaborative.org/archiva/repository/internal/"})

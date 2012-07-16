@@ -359,10 +359,16 @@
   [classads] 
   (vec (filter #(contains? % "IpcUuid") classads)))
 
+(defn sleep-duration
+  []
+  (Long/parseLong (or (get @props "panopticon.app.sleep-duration")
+                      "5000")))
+
 (defn -main
   [& args]
   (def zkprops (props/parse-properties "zkhosts.properties"))
   (def zkurl (get zkprops "zookeeper"))
+  (def sleep-duration-memo (memoize sleep-duration))
   
   (log/info "Starting up. Reading configuration from Zookeeper.")
   
@@ -396,4 +402,7 @@
               (post-osm-updates)))))
       (catch java.lang.Exception e
         (log/warn (format-exception e))))
+    (log/warn "Beginning sleep...")
+    (Thread/sleep (sleep-duration-memo))
+    (log/warn "Done sleeping.")
     (recur)))

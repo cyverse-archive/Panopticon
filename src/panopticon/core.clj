@@ -1,12 +1,12 @@
 (ns panopticon.core
   (:gen-class)
   (:use [clojure-commons.error-codes])
-  (:require [clojure-commons.osm :as osm]
+  (:require [cheshire.core :as cheshire]
+            [clojure-commons.osm :as osm]
             [clojure-commons.props :as props]
             [clojure-commons.clavin-client :as cl]
             [clojure-commons.file-utils :as ft]
             [clojure.tools.logging :as log]
-            [clojure.data.json :as json]
             [clojure.java.shell :as sh]
             [clojure.java.io :as io]
             [clojure.string :as string]
@@ -34,28 +34,28 @@
    "5" HELD
    "6" SUBERR})
 
-(defn osm-url 
-  [] 
+(defn osm-url
+  []
   (get @props "panopticon.osm.url"))
 
-(defn osm-coll 
-  [] 
+(defn osm-coll
+  []
   (get @props "panopticon.osm.collection"))
 
-(defn condor-config 
-  [] 
+(defn condor-config
+  []
   (get @props "panopticon.condor.condor-config"))
 
-(defn condor-q 
-  [] 
+(defn condor-q
+  []
   (get @props "panopticon.condor.condor-q"))
 
-(defn condor-history 
-  [] 
+(defn condor-history
+  []
   (get @props "panopticon.condor.condor-history"))
 
-(defn num-instances 
-  [] 
+(defn num-instances
+  []
   (Integer/parseInt (get @props "panopticon.app.num-instances")))
 
 (defn part-size
@@ -78,10 +78,10 @@
    Running, Submitted, or Idle states."
   []
   (try
-    (let [query {"$or" [{"state.status" RUNNING} 
+    (let [query {"$or" [{"state.status" RUNNING}
                         {"state.status" SUBMITTED}
                         {"state.status" IDLE}]}]
-      (:objects (json/read-json (osm/query (osm-client) query))))
+      (:objects (cheshire/decode (osm/query (osm-client) query) true)))
     (catch java.lang.Exception e
       (log/warn e)
       [])))
@@ -111,8 +111,8 @@
    and returns a list of strings. It splits the input string on \n and
    filters out any lines that begin with --."
   [classad-str]
-  (filterv 
-    #(not (re-find #"^--" %)) 
+  (filterv
+    #(not (re-find #"^--" %))
     (string/split classad-str #"\n")))
 
 (defn classad-maps
@@ -121,10 +121,10 @@
    everything to the left of the first = is the key and
    everything to the right is the value."
   [job-output]
-  (vec 
+  (vec
     (for [classad-str (string/split job-output #"\n\n")]
-      (apply 
-        merge 
+      (apply
+        merge
         (for [classad-line (classad-lines classad-str)]
           (let [sections (string/split classad-line #"\=")
                 cl-key   (string/trim (first sections))
@@ -134,8 +134,8 @@
                            (string/replace #"\"$" ""))]
             {cl-key cl-val}))))))
 
-(defn constraint 
-  [uuid] 
+(defn constraint
+  [uuid]
   (str "IpcUuid ==\"" uuid "\""))
 
 (defn all-constraints
@@ -145,7 +145,7 @@
 (defn full-partition
   "Partitions collection into a vectory of seqs part-size in length.
    If the partition isn't clean, then the last seq will be smaller
-   than the rest. This prevents jobs from being missed. Note: 
+   than the rest. This prevents jobs from being missed. Note:
    (clojure.core/partition) is lazy, but this function is not."
   [coll part-size]
   (vec (partition part-size part-size [] coll)))
@@ -258,8 +258,8 @@
   (let [osm-uuid (:uuid (:state osm-object))]
     (filterv #(= (get % "IpcUuid") osm-uuid) all-classads)))
 
-(def date-formatter  
-  (ctf/formatter "EEE MMM dd YYYY HH:mm:ss 'GMT'Z (z)" (ct/default-time-zone))) 
+(def date-formatter
+  (ctf/formatter "EEE MMM dd YYYY HH:mm:ss 'GMT'Z (z)" (ct/default-time-zone)))
 
 (defn add-completion-date
   "Takes in an osm-obj and adds the completion date if the analysis
@@ -284,10 +284,10 @@
    a new version of the :jobs sub-map with all of the jobs updated
    with info from the classads. Called by (update-jobs) below."
   [osm-obj classads]
-  (apply merge 
+  (apply merge
     (vec
       (for [classad classads]
-        (-> osm-obj 
+        (-> osm-obj
           (assoc-in [:state :status] (de-job-status classad))
           (assoc-in [:state :exit-code] (get classad "ExitCode"))
           (assoc-in [:state :exit-by-signal] (get classad "ExitBySignal"))
@@ -301,9 +301,9 @@
    (analysis-status) function is called to determine the overall state
    of an analysis."
   [osm-objects all-classads]
-  (vec 
-    (filter 
-      #(not (nil? %)) 
+  (vec
+    (filter
+      #(not (nil? %))
       (for [osm-obj osm-objects]
         (let [classads (classads-for-osm-object osm-obj all-classads)]
           (if (pos? (count classads))
@@ -328,26 +328,26 @@
         (do
           (log/warn (str "Analysis " sub-id " is in the HELD state."))
           (when sub-id
-            (condor-rm sub-id)) 
-          (when (and wdir odir) 
+            (condor-rm sub-id))
+          (when (and wdir odir)
             (transfer wdir odir user))
-          (when (and ldir odir) 
+          (when (and ldir odir)
             (transfer ldir odir user))
           (comment (rm-dir ldir)))
-        
+
         (= jstatus FAILED)
-        (do 
-          (when (and wdir odir) 
-            (transfer wdir odir user))  
-          (when (and ldir odir) 
+        (do
+          (when (and wdir odir)
+            (transfer wdir odir user))
+          (when (and ldir odir)
             (transfer ldir odir user))
           (comment (rm-dir ldir)))
-        
+
         (= jstatus COMPLETED)
-        (do 
-          (when (and wdir odir xfer?) 
-            (transfer wdir odir user))  
-          (when (and ldir odir xfer?) 
+        (do
+          (when (and wdir odir xfer?)
+            (transfer wdir odir user))
+          (when (and ldir odir xfer?)
             (transfer ldir odir user))
           (comment (rm-dir ldir))))))
   osm-objects)
@@ -356,7 +356,7 @@
   "Simple function that filters a list of classad maps so
    it only contains classad maps for jobs that were run through
    the DE."
-  [classads] 
+  [classads]
   (vec (filter #(contains? % "IpcUuid") classads)))
 
 (defn sleep-duration
@@ -369,27 +369,27 @@
   (def zkprops (props/parse-properties "zkhosts.properties"))
   (def zkurl (get zkprops "zookeeper"))
   (def sleep-duration-memo (memoize sleep-duration))
-  
+
   (log/info "Starting up. Reading configuration from Zookeeper.")
-  
+
   (cl/with-zk
     zkurl
     (when-not (cl/can-run?)
       (log/warn "THIS APPLICATION CANNOT RUN ON THIS MACHINE. SO SAYETH ZOOKEEPER.")
       (log/warn "THIS APPLICATION WILL NOT EXECUTE CORRECTLY.")
       (System/exit 1))
-    
+
     (reset! props (cl/properties "panopticon")))
-  
+
   (log/info "Done reading configuration from Zookeeper.")
   (log/info (str "OSM Client: " (osm-client)))
-  
-  (log/warn "Checking for porklock...")  
+
+  (log/warn "Checking for porklock...")
   (when-not (ft/exists? "/usr/local/bin/porklock")
     (log/warn "Could not find /usr/local/bin/porklock. Exiting")
     (System/exit 1))
   (log/warn "porklock found.")
-  
+
   (loop []
     (try
       (let [osm-objects (running-jobs)]

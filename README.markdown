@@ -2,7 +2,7 @@
 
 A basic monitoring system for Condor. It alternates between calling condor_q and condor_history and updates the OSM with any analysis state changes that it detects.
 
-Panopticon assumes that it is running as a user that can run the condor_q and condor_history commands. 
+Panopticon assumes that it is running as a user that can run the condor_q and condor_history commands. Additionally, Panopticon requires that Porklock be installed on the same box.
 
 #Configuration Template
 

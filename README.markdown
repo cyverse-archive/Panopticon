@@ -17,11 +17,17 @@ Panopticon assumes that it is running as a user that can run the condor_q and co
     panopticon.app.sleep-duration = $panopticon_sleep_time$
 
 panopticon.osm.url - Setting that provides the base URL for the OSM. Should include port.
+
 panopticon.osm.collection - Sets the bucket in the OSM that Panopticon reads job information from.
+
 panopticon.condor.condor-config  - Sets the path to the config_config file.
+
 panopticon.condor.condor-q - Sets the path to the condor_q executable.
+
 panopticon.condor.condor-history - Sets the path to the condor_history executable.
+
 panopticon.app.num-instances - Vestigial setting. Used to set the number of threads that panopticon used.
+
 panopticon.app.sleep-duration - Read the comment above the setting.
 
 See the iPlant Wiki for more information.

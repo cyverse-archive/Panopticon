@@ -1,6 +1,6 @@
-(defproject panopticon "1.0.0-SNAPSHOT"
+(defproject panopticon "1.0.1-SNAPSHOT"
   :description "FIXME: write description"
-  :dependencies [[org.clojure/clojure "1.4.0"]
+  :dependencies [[org.clojure/clojure "1.5.1"]
                  [org.clojure/tools.logging "0.2.3"]
                  [org.iplantc/clojure-commons "1.4.0-SNAPSHOT"]
                  [cheshire "5.0.1"]

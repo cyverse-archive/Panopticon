@@ -202,13 +202,36 @@
     (log/warn (str "stderr: " (:err results)))
     (log/warn (str "stdout: " (:out results)))))
 
+(defn file-metadata-arg
+  [meta-seq]
+  (let [args (atom "")]
+    (doseq [m meta-seq]
+      (reset! args (str @args (str " -m '" (string/join "," [(:attr m) (:value m) (:unit m)]) "'"))))
+    @args))
+
 (defn transfer
   "Calls porklock to transfer a directory of files into iRODS."
-  [source-dir output-dir user]
+  [source-dir output-dir user skip-parent-meta? meta-maps config-path]
   (when (ft/exists? source-dir)
-    (let [exect    "/usr/local/bin/porklock"
-          results (sh/sh exect "put" "--user" user "--source" source-dir "--destination" output-dir :dir source-dir)]
-      (log/warn (str exect " put --user " user " --source " source-dir " --destination " output-dir :dir source-dir))
+    (let [exect      "/usr/local/bin/porklock"
+          skip-pmeta (if skip-parent-meta? " --skip-parent-meta " "")
+          results    (sh/sh exect 
+                            "put" 
+                            "--user" user 
+                            "--source" source-dir 
+                            "--destination" output-dir
+                            skip-pmeta
+                            (file-metadata-arg meta-maps)
+                            "--config" config-path 
+                            :dir source-dir
+                            :env {"PATH" (str "/usr/local/bin:/usr/local2/bin:/usr/local3/bin:" (System/getenv "PATH"))})]
+      (log/warn (str exect " put --user " user 
+                     " --source " source-dir 
+                     " --destination " output-dir
+                     skip-pmeta
+                     (file-metadata-arg meta-maps)
+                     " --config " config-path
+                     :dir source-dir))
       (log/warn (str "Exit Code: " (:exit results)))
       (log/warn (str "stderr: " (:err results)))
       (log/warn (str "stdout: " (:out results))))))
@@ -314,6 +337,7 @@
    status of the analysis they represent."
   [osm-objects]
   (doseq [osm-object osm-objects]
+    (clojure.pprint/pprint osm-object)
     (let [jstatus (get-in osm-object [:state :status])
           held?   (get-in osm-object [:state :held])
           sub-id  (get-in osm-object [:state :sub_id])
@@ -321,7 +345,10 @@
           wdir    (get-in osm-object [:state :working_dir])
           odir    (get-in osm-object [:state :output_dir])
           monitor (get-in osm-object [:state :monitor_transfer_logs])
+          skip?   (get-in osm-object [:state :skip-parent-meta])
+          meta    (get-in osm-object [:state :file-metadata])
           user    (get-in osm-object [:state :user])
+          cfg     (ft/path-join wdir "logs" "irods-config")
           xfer?   (if (nil? monitor) true monitor)]
       (cond
         held?
@@ -330,25 +357,25 @@
           (when sub-id
             (condor-rm sub-id))
           (when (and wdir odir)
-            (transfer wdir odir user))
+            (transfer wdir odir user skip? meta cfg))
           (when (and ldir odir)
-            (transfer ldir odir user))
+            (transfer ldir odir user skip? meta cfg))
           (comment (rm-dir ldir)))
 
         (= jstatus FAILED)
         (do
           (when (and wdir odir)
-            (transfer wdir odir user))
+            (transfer wdir odir user skip? meta cfg))
           (when (and ldir odir)
-            (transfer ldir odir user))
+            (transfer ldir odir user skip? meta cfg))
           (comment (rm-dir ldir)))
 
         (= jstatus COMPLETED)
         (do
           (when (and wdir odir xfer?)
-            (transfer wdir odir user))
+            (transfer wdir odir user skip? meta cfg))
           (when (and ldir odir xfer?)
-            (transfer ldir odir user))
+            (transfer ldir odir user skip? meta cfg))
           (comment (rm-dir ldir))))))
   osm-objects)
 

@@ -6,7 +6,7 @@
                  [cheshire "5.0.1"]
                  [clj-time "0.4.4"]
                  [slingshot "0.10.3"]]
-  :plugins [[org.iplantc/lein-iplant-rpm "1.4.0-SNAPSHOT"]]
+  :plugins [[org.iplantc/lein-iplant-rpm "1.4.1-SNAPSHOT"]]
   :iplant-rpm {:summary "panopticon"
                :runuser "condor"
                :dependencies ["iplant-service-config >= 0.1.0-5"]

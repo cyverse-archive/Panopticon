@@ -156,7 +156,7 @@
   [uuids]
   (let [args    ["condor_history" "-l" "-constraint" (all-constraints uuids)]
         results (apply sh/sh args)]
-    (log/warn args)
+    (log/warn "[panopticon]" args)
     (log/info (str "Exit Code: " (:exit results)))
     (log/info (str "stderr: " (:err results)))
     (log/info (str "stdout: " (:out results)))
@@ -167,7 +167,7 @@
    Uses map to call condor_history. Returns a list of maps created by
    (classad-maps)."
   [uuids]
-  (log/warn (count uuids))
+  (log/warn "[panopticon]" (count uuids))
   (vec (flatten (map run-history (full-partition uuids (part-size)))))
   #_(vec (flatten (map run-history uuids))))
 
@@ -177,7 +177,7 @@
   [uuids]
   (let [args    ["condor_q" "-long" "-constraint" (all-constraints uuids)]
         results (apply sh/sh args)]
-    (log/warn args)
+    (log/warn "[panopticon]" args)
     (log/info (str "Exit Code: " (:exit results)))
     (log/info (str "stderr: " (:err results)))
     (log/info (str "stdout: " (:out results)))
@@ -188,7 +188,7 @@
    Uses pmap to call condor_q. Returns a list of maps created by
    (classad-maps)."
   [uuids]
-  (log/warn (count uuids))
+  (log/warn "[panopticon]" (count uuids))
   (vec (flatten (map run-queue (full-partition uuids (part-size)))))
   #_(vec (flatten (map run-queue uuids))))
 
@@ -197,21 +197,54 @@
   [sub-id]
   (let [cmd     ["condor_rm" sub-id]
         results (apply sh/sh cmd)]
-    (log/warn cmd)
-    (log/warn (str "Exit Code: " (:exit results)))
-    (log/warn (str "stderr: " (:err results)))
-    (log/warn (str "stdout: " (:out results)))))
+    (log/warn "[panopticon]" cmd)
+    (log/warn "[panopticon]" (str "Exit Code: " (:exit results)))
+    (log/warn "[panopticon]" (str "stderr: " (:err results)))
+    (log/warn "[panopticon]" (str "stdout: " (:out results)))))
+
+(defn file-metadata-arg
+  [meta-seq]
+  (let [args (atom [])]
+    (doseq [m meta-seq]
+      (reset! args (concat @args ["-m" (string/join "," [(:attr m) (:value m) (:unit m)])])))
+    @args))
+
+(defn panop-exec
+  ([args]
+    (panop-exec args false))
+  ([args stringify?]
+    (if-not stringify?
+      (apply sh/sh (flatten args))
+      (string/join " " (flatten args)))))
+
+(def put-env 
+  {"PATH" (str "/usr/local/bin:/usr/local2/bin:/usr/local3/bin:" (System/getenv "PATH"))})
+
 
 (defn transfer
   "Calls porklock to transfer a directory of files into iRODS."
-  [source-dir output-dir user]
+  [source-dir output-dir user skip-parent-meta? meta-maps config-path]
   (when (ft/exists? source-dir)
-    (let [exect    "/usr/local/bin/porklock"
-          results (sh/sh exect "put" "--user" user "--source" source-dir "--destination" output-dir :dir source-dir)]
-      (log/warn (str exect " put --user " user " --source " source-dir " --destination " output-dir :dir source-dir))
-      (log/warn (str "Exit Code: " (:exit results)))
-      (log/warn (str "stderr: " (:err results)))
-      (log/warn (str "stdout: " (:out results))))))
+    (let [exect      "/usr/local/bin/porklock"
+          skip-pmeta (if skip-parent-meta? " --skip-parent-meta " "")
+          meta-args  (file-metadata-arg meta-maps)
+          all-args   [exect 
+                      "put"
+                      "--user" user 
+                      "--source" source-dir 
+                      "--destination" output-dir
+                      skip-pmeta
+                      meta-args
+                      "--config" config-path 
+                      :dir source-dir
+                      :env put-env]
+          results    (panop-exec all-args)]
+      (log/warn "[panopticon] [metadata] " meta-maps)
+      (log/warn "[panopticon] [metadata] " meta-args)
+      (log/warn "[panopticon] [metadata]" (panop-exec all-args true))
+      (log/warn "[panopticon]" "Exit Code: " (:exit results))
+      (log/warn "[panopticon]" "stderr: " (:err results))
+      (log/warn "[panopticon]" "stdout: " (:out results)))))
 
 (defn rm-dir
   "Uses Apache Commons IO to recursively delete a directory. Does not play nice
@@ -314,6 +347,7 @@
    status of the analysis they represent."
   [osm-objects]
   (doseq [osm-object osm-objects]
+    (clojure.pprint/pprint osm-object)
     (let [jstatus (get-in osm-object [:state :status])
           held?   (get-in osm-object [:state :held])
           sub-id  (get-in osm-object [:state :sub_id])
@@ -321,34 +355,38 @@
           wdir    (get-in osm-object [:state :working_dir])
           odir    (get-in osm-object [:state :output_dir])
           monitor (get-in osm-object [:state :monitor_transfer_logs])
+          skip?   (get-in osm-object [:state :skip-parent-meta])
+          meta    (get-in osm-object [:state :file-metadata])
           user    (get-in osm-object [:state :user])
+          cfg     (ft/path-join wdir "logs" "irods-config")
           xfer?   (if (nil? monitor) true monitor)]
+      (log/warn "[panopticon] [metadata] " meta)
       (cond
         held?
         (do
-          (log/warn (str "Analysis " sub-id " is in the HELD state."))
+          (log/warn "[panopticon]" (str "Analysis " sub-id " is in the HELD state."))
           (when sub-id
             (condor-rm sub-id))
           (when (and wdir odir)
-            (transfer wdir odir user))
+            (transfer wdir odir user skip? meta cfg))
           (when (and ldir odir)
-            (transfer ldir odir user))
+            (transfer ldir odir user skip? meta cfg))
           (comment (rm-dir ldir)))
 
         (= jstatus FAILED)
         (do
           (when (and wdir odir)
-            (transfer wdir odir user))
+            (transfer wdir odir user skip? meta cfg))
           (when (and ldir odir)
-            (transfer ldir odir user))
+            (transfer ldir odir user skip? meta cfg))
           (comment (rm-dir ldir)))
 
         (= jstatus COMPLETED)
         (do
           (when (and wdir odir xfer?)
-            (transfer wdir odir user))
+            (transfer wdir odir user skip? meta cfg))
           (when (and ldir odir xfer?)
-            (transfer ldir odir user))
+            (transfer ldir odir user skip? meta cfg))
           (comment (rm-dir ldir))))))
   osm-objects)
 
@@ -384,11 +422,11 @@
   (log/info "Done reading configuration from Zookeeper.")
   (log/info (str "OSM Client: " (osm-client)))
 
-  (log/warn "Checking for porklock...")
+  (log/warn "[panopticon]" "Checking for porklock...")
   (when-not (ft/exists? "/usr/local/bin/porklock")
-    (log/warn "Could not find /usr/local/bin/porklock. Exiting")
+    (log/warn "[panopticon]" "Could not find /usr/local/bin/porklock. Exiting")
     (System/exit 1))
-  (log/warn "porklock found.")
+  (log/warn "[panopticon]" "porklock found.")
 
   (loop []
     (try
@@ -402,7 +440,7 @@
               (post-osm-updates)))))
       (catch java.lang.Exception e
         (log/warn (format-exception e))))
-    (log/warn "Beginning sleep...")
+    (log/warn "[panopticon]" "Beginning sleep...")
     (Thread/sleep (sleep-duration-memo))
-    (log/warn "Done sleeping.")
+    (log/warn "[panopticon]" "Done sleeping.")
     (recur)))

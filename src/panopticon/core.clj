@@ -204,10 +204,22 @@
 
 (defn file-metadata-arg
   [meta-seq]
-  (let [args (atom "")]
+  (let [args (atom [])]
     (doseq [m meta-seq]
-      (reset! args (str @args (str " -m '" (string/join "," [(:attr m) (:value m) (:unit m)]) "'"))))
+      (reset! args (concat @args ["-m" (string/join "," [(:attr m) (:value m) (:unit m)])])))
     @args))
+
+(defn panop-exec
+  ([args]
+    (panop-exec args false))
+  ([args stringify?]
+    (if-not stringify?
+      (apply sh/sh (flatten args))
+      (string/join " " (flatten args)))))
+
+(def put-env 
+  {"PATH" (str "/usr/local/bin:/usr/local2/bin:/usr/local3/bin:" (System/getenv "PATH"))})
+
 
 (defn transfer
   "Calls porklock to transfer a directory of files into iRODS."
@@ -216,27 +228,23 @@
     (let [exect      "/usr/local/bin/porklock"
           skip-pmeta (if skip-parent-meta? " --skip-parent-meta " "")
           meta-args  (file-metadata-arg meta-maps)
-          results    (sh/sh exect 
-                            "put" 
-                            "--user" user 
-                            "--source" source-dir 
-                            "--destination" output-dir
-                            skip-pmeta
-                            meta-args
-                            "--config" config-path 
-                            :dir source-dir
-                            :env {"PATH" (str "/usr/local/bin:/usr/local2/bin:/usr/local3/bin:" (System/getenv "PATH"))})]
+          all-args   [exect 
+                      "put"
+                      "--user" user 
+                      "--source" source-dir 
+                      "--destination" output-dir
+                      skip-pmeta
+                      meta-args
+                      "--config" config-path 
+                      :dir source-dir
+                      :env put-env]
+          results    (panop-exec all-args)]
       (log/warn "[panopticon] [metadata] " meta-maps)
       (log/warn "[panopticon] [metadata] " meta-args)
-      (log/warn "[panopticon] [metadata]" (str exect " put --user " user 
-                     " --source " source-dir 
-                     " --destination " output-dir
-                     skip-pmeta
-                     meta-args
-                     " --config " config-path))
-      (log/warn "[panopticon]" (str "Exit Code: " (:exit results)))
-      (log/warn "[panopticon]" (str "stderr: " (:err results)))
-      (log/warn "[panopticon]" (str "stdout: " (:out results))))))
+      (log/warn "[panopticon] [metadata]" (panop-exec all-args true))
+      (log/warn "[panopticon]" "Exit Code: " (:exit results))
+      (log/warn "[panopticon]" "stderr: " (:err results))
+      (log/warn "[panopticon]" "stdout: " (:out results)))))
 
 (defn rm-dir
   "Uses Apache Commons IO to recursively delete a directory. Does not play nice

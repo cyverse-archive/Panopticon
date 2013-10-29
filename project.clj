@@ -9,7 +9,7 @@
   :plugins [[org.iplantc/lein-iplant-rpm "1.4.1-SNAPSHOT"]]
   :iplant-rpm {:summary "panopticon"
                :runuser "condor"
-               :dependencies ["iplant-service-config >= 0.1.0-5" "iplant-clavin"]
+               :dependencies ["iplant-service-config >= 0.1.0-5" "iplant-clavin" "java-1.7.0-openjdk"]
                :config-files ["log4j.properties"]
                :config-path "conf"}
   :aot [panopticon.core]
